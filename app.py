@@ -15,7 +15,6 @@ Streamlit-specific copy to keep in step.
 
 from __future__ import annotations
 
-import hmac
 import inspect
 import json
 from pathlib import Path
@@ -24,8 +23,8 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from labdata import (TUBES, Check, Report, answer_key, assign_tubes,
-                     ParseError, parse_csv, review, summarise)
+from labdata import (TUBES, answer_key, assign_tubes, ParseError,
+                     parse_csv, review, summarise)
 
 HERE = Path(__file__).parent
 SIM = HERE / "raman-sim.html"   # the one and only instrument
@@ -76,13 +75,6 @@ def embed(student: str, lock: bool, height: int, reveal: bool = False) -> None:
     _frame(html, height)
 
 
-def _instructor_password() -> str | None:
-    try:
-        return st.secrets.get("INSTRUCTOR_PASSWORD") or None
-    except FileNotFoundError:
-        return None
-
-
 # --------------------------------------------------------------------------
 # Sidebar
 # --------------------------------------------------------------------------
@@ -96,37 +88,15 @@ with st.sidebar:
     height = st.slider("Instrument panel height (px)", 700, 1800, 1150, 50,
                        help="The instrument fills its frame. Raise this on a "
                             "tall monitor.")
-
-    # Anything that names the tube contents is instructor-only: on a public
-    # deployment every student can see this sidebar.
-    password = _instructor_password()
-    with st.expander("Instructor", expanded=st.session_state.get("instructor", False)):
-        if password is None:
-            st.caption("Set `INSTRUCTOR_PASSWORD` in the app's secrets to "
-                       "enable instructor tools.")
-        elif not st.session_state.get("instructor"):
-            entered = st.text_input("Password", type="password")
-            if entered:
-                if hmac.compare_digest(entered, password):
-                    st.session_state.instructor = True
-                    st.rerun()
-                st.error("Incorrect password.")
-        else:
-            if st.button("Sign out"):
-                st.session_state.instructor = False
-                st.rerun()
-    instructor = bool(password) and st.session_state.get("instructor", False)
-
-    lock, reveal = True, False
-    if instructor:
-        lock = st.checkbox("Lock the ID in the instrument", value=True,
-                           help="Stops students editing the seed to fish for a "
-                                "cleaner dataset.")
-        reveal = st.checkbox("Name the tube contents", value=False,
-                             help="Shows what each capillary holds in the readout.")
-        if reveal and student:
-            a = assign_tubes(student)
-            st.caption("  ·  ".join(f"**{l}** {a[l][1]}" for l, _, _ in TUBES))
+    lock = st.checkbox("Lock the ID in the instrument", value=True,
+                       help="Stops students editing the seed to fish for a "
+                            "cleaner dataset.")
+    reveal = st.checkbox("Name the tube contents", value=False,
+                         help="Shows what each capillary holds in the readout. "
+                              "The arrangement is shuffled per student ID.")
+    if reveal and student:
+        a = assign_tubes(student)
+        st.caption("  ·  ".join(f"**{l}** {a[l][1]}" for l, _, _ in TUBES))
     st.divider()
     st.caption(
         "Everything in the instrument runs in the browser, so a full lab "
@@ -136,9 +106,9 @@ with st.sidebar:
 
 st.title("Raman microspectrometer")
 
-tabs = st.tabs(["Instrument", "Submit a spectrum"]
-               + (["Class view"] if instructor else []))
-tab_run, tab_submit = tabs[0], tabs[1]
+tab_run, tab_submit, tab_class = st.tabs(
+    ["Instrument", "Submit a spectrum", "Class view"]
+)
 
 # --------------------------------------------------------------------------
 # Instrument
@@ -164,28 +134,6 @@ with tab_run:
 # --------------------------------------------------------------------------
 # Submission
 # --------------------------------------------------------------------------
-# These checks name the tube contents or list a specific polymorph's bands.
-CONTENT_CHECKS = {"Band position", "Lattice modes"}
-
-
-def for_students(rep):
-    """Drop the checks that would give the identification away, keeping a
-    content-free version of the band check so a glass-dominated spectrum is
-    still flagged."""
-    checks = []
-    for c in rep.checks:
-        if c.label not in CONTENT_CHECKS:
-            checks.append(c)
-        elif c.label == "Band position" and not c.ok:
-            checks.append(Check(
-                False, c.label,
-                "The strongest band does not match the material in this tube. "
-                "The spectrum is probably dominated by glass or background "
-                "rather than by the sample.",
-            ))
-    return Report(spectrum=rep.spectrum, checks=checks)
-
-
 def show_report(rep) -> None:
     spec = rep.spectrum
     m = spec.meta
@@ -242,8 +190,6 @@ with tab_submit:
     if raw is not None:
         try:
             rep = review(parse_csv(raw))
-            if not instructor:
-                rep = for_students(rep)
         except ParseError as exc:
             st.error(f"Could not read that file: {exc}")
         except Exception as exc:  # malformed numbers, truncated paste, etc.
@@ -262,61 +208,60 @@ with tab_submit:
 # --------------------------------------------------------------------------
 # Class view
 # --------------------------------------------------------------------------
-if instructor:
-    with tabs[2]:
-        st.write("Drop in a whole section's exports to see them side by side.")
-        ups = st.file_uploader("Spectrum exports", type=["csv", "txt"],
-                               accept_multiple_files=True, key="batch")
+with tab_class:
+    st.write("Drop in a whole section's exports to see them side by side.")
+    ups = st.file_uploader("Spectrum exports", type=["csv", "txt"],
+                           accept_multiple_files=True, key="batch")
 
-        if ups:
-            reports, failed = [], []
-            for f in ups:
-                try:
-                    reports.append(review(parse_csv(f.getvalue())))
-                except Exception as exc:
-                    failed.append((f.name, str(exc)))
+    if ups:
+        reports, failed = [], []
+        for f in ups:
+            try:
+                reports.append(review(parse_csv(f.getvalue())))
+            except Exception as exc:
+                failed.append((f.name, str(exc)))
 
-            if reports:
-                table = summarise(reports)
-                _table(table)
-                st.download_button(
-                    "Download summary (.csv)",
-                    table.to_csv(index=False).encode("utf-8"),
-                    file_name="raman_class_summary.csv",
-                    mime="text/csv",
-                )
-
-                clean = sum(1 for r in reports if not r.problems)
-                st.caption(f"{clean} of {len(reports)} submissions passed every check.")
-
-                with st.expander("Per-submission detail"):
-                    for rep in reports:
-                        st.markdown(
-                            f"**{rep.spectrum.student}** — scan "
-                            f"{rep.spectrum.meta.get('scan')} in {rep.spectrum.tube}"
-                        )
-                        for c in rep.problems:
-                            st.markdown(f"&nbsp;&nbsp;⚠️ {c.label} — {c.detail}")
-                        if not rep.problems:
-                            st.markdown("&nbsp;&nbsp;✅ no issues")
-
-            for name, err in failed:
-                st.error(f"{name}: {err}")
-        else:
-            st.caption("No files loaded.")
-
-        st.divider()
-        with st.expander("Answer key for a roster"):
-            st.caption(
-                "Each student gets a different arrangement of the five capillaries. "
-                "Paste a roster, one ID per line, to recover who had what."
+        if reports:
+            table = summarise(reports)
+            _table(table)
+            st.download_button(
+                "Download summary (.csv)",
+                table.to_csv(index=False).encode("utf-8"),
+                file_name="raman_class_summary.csv",
+                mime="text/csv",
             )
-            roster = st.text_area("Student IDs", height=120,
-                                  placeholder="student-01\nstudent-02\nstudent-03")
-            ids = [r.strip() for r in roster.splitlines() if r.strip()]
-            if ids:
-                key = answer_key(ids)
-                _table(key)
-                st.download_button("Download answer key (.csv)",
-                                   key.to_csv(index=False).encode("utf-8"),
-                                   file_name="raman_answer_key.csv", mime="text/csv")
+
+            clean = sum(1 for r in reports if not r.problems)
+            st.caption(f"{clean} of {len(reports)} submissions passed every check.")
+
+            with st.expander("Per-submission detail"):
+                for rep in reports:
+                    st.markdown(
+                        f"**{rep.spectrum.student}** — scan "
+                        f"{rep.spectrum.meta.get('scan')} in {rep.spectrum.tube}"
+                    )
+                    for c in rep.problems:
+                        st.markdown(f"&nbsp;&nbsp;⚠️ {c.label} — {c.detail}")
+                    if not rep.problems:
+                        st.markdown("&nbsp;&nbsp;✅ no issues")
+
+        for name, err in failed:
+            st.error(f"{name}: {err}")
+    else:
+        st.caption("No files loaded.")
+
+    st.divider()
+    with st.expander("Answer key for a roster"):
+        st.caption(
+            "Each student gets a different arrangement of the five capillaries. "
+            "Paste a roster, one ID per line, to recover who had what."
+        )
+        roster = st.text_area("Student IDs", height=120,
+                              placeholder="student-01\nstudent-02\nstudent-03")
+        ids = [r.strip() for r in roster.splitlines() if r.strip()]
+        if ids:
+            key = answer_key(ids)
+            _table(key)
+            st.download_button("Download answer key (.csv)",
+                               key.to_csv(index=False).encode("utf-8"),
+                               file_name="raman_answer_key.csv", mime="text/csv")

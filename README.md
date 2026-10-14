@@ -5,23 +5,13 @@
 
 ## Deploying to Streamlit Community Cloud
 
-1. Push this folder to a GitHub repository (`.gitignore` keeps
-   `.streamlit/secrets.toml` out of it).
+1. Push this folder to a GitHub repository.
 2. At [share.streamlit.io](https://share.streamlit.io), **Create app** → pick the
    repo, branch `main`, main file `app.py`.
-3. Under **Advanced settings → Secrets**, paste
-   `INSTRUCTOR_PASSWORD = "your-password"`, then deploy.
-4. Give students the URL. Each enters their own ID in the sidebar.
+3. Deploy, then give students the URL. Each enters their own ID in the sidebar.
 
-The public app shows students only the instrument and the Submit tab. The tube
-reveal, the ID-lock toggle, the Class view and the answer key appear after
-signing in under **Instructor** in the sidebar. For students, Submit feedback
-leaves out the checks that name a tube's contents or list a polymorph's bands.
-Without the secret set, instructor tools are disabled entirely. For local use,
-put the same line in `.streamlit/secrets.toml`.
-
-The shuffle runs in the page's JavaScript, so a determined student reading the
-source could work out their arrangement. The gate stops casual lookup, not that.
+Every tool, including the tube reveal and the answer key, is visible to anyone
+with the URL.
 
 ## What runs where
 
