@@ -8,12 +8,13 @@
   One file, used two ways.
 
   Open it directly in a browser and it is a complete standalone instrument.
-  Embed it from app.py and the Streamlit wrapper pins the operator identity
-  through window.LAB_PRESET before boot. Nothing here requires the wrapper: if
-  LAB_PRESET is absent the instrument simply uses the ID in its own field.
+  app.py also serves it as a Streamlit component: the app sends the operator's
+  name in, and every finished scan is sent back out for the Analysis tab.
+  Nothing here requires the wrapper: run standalone, the name comes from its own
+  field and scans are only saved through the CSV buttons.
 
   Do not keep a second copy for the Streamlit app. Divergence between copies is
-  silent, and labdata.py only agrees with one of them.
+  silent.
 -->
 <style>
   :root{
@@ -176,8 +177,8 @@
     <button class="btn" id="illumBtn">White light: on</button>
     <div class="hdr-spacer"></div>
     <div class="hdr-field">
-      <label for="student">Student ID</label>
-      <input id="student" value="student-01" spellcheck="false">
+      <label for="student">Name</label>
+      <input id="student" value="" placeholder="First name" spellcheck="false">
     </div>
 
   </header>
@@ -290,7 +291,7 @@
     </div>
 
     <p class="note">
-      Every accumulation comes from a seeded generator, so a student ID reproduces its run exactly,
+      Every accumulation comes from a seeded generator, so a name reproduces its run exactly,
       while each new acquisition on the same spot gets fresh noise. Leave the white light on and it
       will swamp the detector, as it does on the bench.
     </p>
@@ -344,7 +345,6 @@ const CONFIG = {
   ],
   chromatic: 0.006,          // lateral colour, as a fraction of the barrel term
   alignND: 0.002,            // transmission of the alignment attenuator
-  revealIdentities: false,   // instructor switch: name the contents in the readout
   capillaryLens: 2.0,        // strength of the cylindrical-lens distortion through the glass
   capillaryVeil: 0.55,       // how much of the plate behind a tube still shows through
   startObjective: 0,
@@ -375,10 +375,9 @@ const SAMPLES = [
   {label: "Tube 5", x:  6.40, y: 0, zBest:   2},
 ];
 
-/* What goes in them. The three glycine polymorphs are chemically identical and
-   look identical down the microscope, as do the two chloroforms — so the tubes
-   are labelled by number only and the contents are shuffled per student. The
-   arrangement is reproducible from the student ID for marking.               */
+/* What goes in them, in tube order: CONTENTS[0] is in SAMPLES[0] and so on.
+   The arrangement is the same for everyone and is never shown by the
+   instrument, which labels tubes by number only.                             */
 const CONTENTS = [
   {key: "alpha_glycine", name: "\u03b1-glycine", phase: "powder", scale: 0.52, fluor: 0.18},
   {key: "beta_glycine",  name: "\u03b2-glycine", phase: "powder", scale: 0.46, fluor: 0.22},
@@ -499,19 +498,20 @@ const state = {
   beam: 'off', illum: true,
   power: 12, tint: 1, accum: 4,
   running: false, abort: false, focusing: false,
-  scanIndex: 0, sum: null, count: 0, last: null, meta: null,
+  scanIndex: 0, sum: null, count: 0, last: null, meta: null, scans: [],
   gain: 1, logLines: [],
 };
 const OBJ = () => CONFIG.objectives[state.obj];
 
-function studentSeed(){ return $('student').value.trim() || 'anon'; }
+function operatorName(){ return $('student').value.trim() || 'anon'; }
+// Case-folded so "Maya" and "maya " get the same session back.
+function studentSeed(){ return operatorName().toLowerCase(); }
 function refreshGain(){
   state.gain = 0.78 + 0.45 * mulberry32(hashStr(studentSeed() + '|gain'))();
   // parfocality is never perfect, and differs from instrument to instrument
   CONFIG.objectives.forEach((o, i) => {
     o.parfocalUm = (mulberry32(hashStr(studentSeed() + '|pf' + i))() - 0.5) * 14;
   });
-  assignTubes();
 }
 refreshGain();
 
@@ -530,25 +530,14 @@ SAMPLES.forEach(s => {
   s.size  = Math.min(s.w, s.h) / 2;
 });
 
-/* Which tube holds what. Shuffled from the student ID, so no two students get
-   the same arrangement and the key can be recomputed for marking.           */
-function assignTubes(){
-  const rng = mulberry32(hashStr(studentSeed() + '|tubes'));
-  const pool = CONTENTS.slice();
-  for (let i = pool.length - 1; i > 0; i--){        // Fisher-Yates
-    const j = Math.floor(rng() * (i + 1));
-    const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
-  }
-  SAMPLES.forEach((s, k) => {
-    const c = pool[k];
-    s.spectrum = c.key;
-    s.identity = c.name;      // never shown unless CONFIG.revealIdentities
-    s.phase    = c.phase;
-    s.scale    = c.scale;
-    s.fluor    = c.fluor;
-    s.thin     = true;        // the capillary wall sits in the confocal volume
-  });
-}
+SAMPLES.forEach((s, k) => {
+  const c = CONTENTS[k];
+  s.spectrum = c.key;
+  s.phase    = c.phase;
+  s.scale    = c.scale;
+  s.fluor    = c.fluor;
+  s.thin     = true;          // the capillary wall sits in the confocal volume
+});
 
 /* Signed distance from the beam to the bore edge, in mm. Negative inside. */
 function sdf(s){
@@ -1429,8 +1418,7 @@ function updateReadout(){
     '<span><i>objective </i>' + o.name + '  NA ' + o.NA.toFixed(2) +
       '  <i>depth </i>±' + o.dofUm.toFixed(1) + ' µm</span>' +
     '<span><i>at beam </i>' +
-      (s ? s.label + (CONFIG.revealIdentities && s.identity ? ' \u00b7 ' + s.identity : '')
-         : 'bare slide') +
+      (s ? s.label : 'bare slide') +
       '<span class="' + (sharp ? 'good' : '') + '">' +
       (sharp ? '  in focus' : '  off focus by ' + df.toFixed(1) + ' µm') + '</span></span>' +
     '<span' + (sat ? ' class="sat"' : '') + '><i>live </i>' +
@@ -1550,10 +1538,8 @@ async function acquire(){
 
   const N = state.accum, t = state.tint, o = OBJ();
   const s = underBeam();
-  const where = s
-    ? s.label + (CONFIG.revealIdentities && s.identity ? ' \u00b7 ' + s.identity : '')
-    : 'bare slide';
-  state.meta = {student: studentSeed(), scan: state.scanIndex,
+  const where = s ? s.label : 'bare slide';
+  state.meta = {name: operatorName(), scan: state.scanIndex,
                 x: state.x, y: state.y, z: state.z, obj: o.name, NA: o.NA,
                 power: state.power, tint: t, accum: N, region: where,
                 beam: state.beam, illum: state.illum,
@@ -1615,6 +1601,7 @@ async function acquire(){
 
   const done = state.count;
   state.running = false;
+  if (done){ state.scans.push(buildCSV()); publishScans(); }
   $('acqBtn').disabled = false; $('stopBtn').disabled = true;
   $('csvBtn').disabled = done === 0; $('csvTextBtn').disabled = done === 0;
   $('bar').style.width = '0%';
@@ -1648,7 +1635,8 @@ function buildCSV(){
   const est = estimateSNR(Array.from(state.sum, v => v / state.count));
   const L = [
     '# Raman microspectrometer - simulated acquisition',
-    '# student,' + m.student, '# scan,' + m.scan, '# started,' + m.started,
+    '# name,' + m.name, '# scan,' + m.scan, '# started,' + m.started,
+    '# location,' + m.region,
     '# stage_x_mm,' + m.x, '# stage_y_mm,' + m.y, '# focus_um,' + m.z,
     '# objective,' + m.obj, '# NA,' + m.NA,
     '# laser_power_pct,' + m.power, '# integration_s,' + m.tint,
@@ -1662,8 +1650,22 @@ function buildCSV(){
   for (let i = 0; i < CONFIG.nPixels; i++)
     L.push(WN[i].toFixed(2) + ',' + (state.sum[i] / state.count).toFixed(2) + ',' +
            (state.last ? state.last[i].toFixed(2) : ''));
-  return {name: m.student + '_scan' + String(m.scan).padStart(2,'0') + '.csv',
-          text: L.join('\n'), scan: m.scan};
+  return {name: m.name + '_scan' + String(m.scan).padStart(2,'0') + '.csv',
+          text: L.join('\n'), scan: m.scan, started: m.started};
+}
+
+/* ---------- link to the Streamlit app ----------
+   Speaks the Streamlit component protocol directly, so no build step or
+   library is needed. Standalone, window.parent is this window and none of
+   this runs.                                                                 */
+const HOSTED = window.parent !== window;
+function toHost(type, extra){
+  if (HOSTED) window.parent.postMessage(
+    Object.assign({isStreamlitMessage: true, type: type}, extra), '*');
+}
+// The whole list goes every time: the app keeps only the latest value.
+function publishScans(){
+  toHost('streamlit:setComponentValue', {value: state.scans, dataType: 'json'});
 }
 
 $('csvBtn').onclick = () => {
@@ -1688,8 +1690,8 @@ $('sheetCopy').onclick = async () => {
   setTimeout(() => { $('sheetCopy').textContent = 'Copy to clipboard'; }, 1800);
 };
 
-$('logBtn').onclick = () => download(studentSeed() + '_session.txt',
-  'Raman simulator session log\nStudent: ' + studentSeed() + '\n' +
+$('logBtn').onclick = () => download(operatorName() + '_session.txt',
+  'Raman simulator session log\nOperator: ' + operatorName() + '\n' +
   new Date().toString() + '\n\n' + state.logLines.join('\n'));
 
 /* ---------- wiring ---------- */
@@ -1739,7 +1741,7 @@ bindRange('accum', 'accumOut', v => String(v), 'accum');
 
 $('student').onchange = () => {
   refreshGain(); state.scanIndex = 0;
-  log('Operator set to ' + studentSeed() + '. Detector gain and parfocality re-referenced.');
+  log('Operator set to ' + operatorName() + '. Detector gain and parfocality re-referenced.');
   redraw();
 };
 
@@ -1760,23 +1762,33 @@ window.addEventListener('keydown', e => {
 updateEstimate();
 
 /* ---------- boot ----------
-   A host page (the Streamlit wrapper) may pin the operator identity before the
-   instrument comes up, so the seed and the tube arrangement are assigned rather
-   than self-selected.                                                        */
-const PRESET = window.LAB_PRESET || {};   // absent when run standalone
-if (PRESET.student){
-  $('student').value = PRESET.student;
-  if (PRESET.lock) $('student').readOnly = true;
-  refreshGain();
+   Hosted, the app sets the operator's name; the field is read-only so the seed
+   cannot drift from what the app shows. The app re-sends its arguments on
+   every rerun, so act only on a change.                                       */
+if (HOSTED){
+  $('student').readOnly = true;
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || d.type !== 'streamlit:render') return;
+    const a = d.args || {};
+    if (a.height) toHost('streamlit:setFrameHeight', {height: a.height});
+    if (a.name && a.name !== $('student').value){
+      $('student').value = a.name;
+      refreshGain(); state.scanIndex = 0; state.scans = [];
+      publishScans();
+      log('Operator set to ' + operatorName() + '.');
+      redraw();
+    }
+  });
+  toHost('streamlit:componentReady', {apiVersion: 1});
 }
-if (PRESET.reveal) CONFIG.revealIdentities = true;
 
 redraw();
 drawPlot();
 log('Instrument ready. Grating 1800 gr/mm, detector at \u221260 °C, ' +
     OBJ().name + ' objective in the path.');
-log('Five capillaries on the stage, numbered left to right. Three hold crystalline '
-  + 'powders, two hold liquids; which is which is for you to establish.');
+log('Five capillaries on the stage, numbered left to right at X = \u22126.4, '
+  + '\u22123.2, 0, 3.2 and 6.4 mm.');
 log('Sweep at low magnification to find a tube, then switch up to measure.');
 log('Record the stage coordinates of anything you want to come back to.');
 </script>

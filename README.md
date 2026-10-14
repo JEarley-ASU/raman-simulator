@@ -1,4 +1,4 @@
-# Raman microspectrometer simulator — Streamlit wrapper
+# Raman microspectrometer simulator — Streamlit app
 
     pip install -r requirements.txt
     streamlit run app.py
@@ -8,51 +8,51 @@
 1. Push this folder to a GitHub repository.
 2. At [share.streamlit.io](https://share.streamlit.io), **Create app** → pick the
    repo, branch `main`, main file `app.py`.
-3. Deploy, then give students the URL. Each enters their own ID in the sidebar.
+3. Deploy, then give students the URL. Each enters their first name in the
+   sidebar.
 
-Every tool, including the tube reveal and the answer key, is visible to anyone
-with the URL.
+## What students see
 
-## What runs where
+- **Instrument.** The simulated microspectrometer. Every finished scan is sent
+  to the Analysis tab automatically; **Save spectrum (.csv)** still saves a file.
+- **Analysis.** A checkbox table of every scan from the session, plus any CSVs
+  they upload (for work from an earlier session). Ticked spectra are overlaid,
+  and the processing applies to all of them:
+  cosmic-ray removal, reference subtraction, baseline correction (iterative
+  polynomial or asymmetric least squares), Savitzky–Golay smoothing,
+  normalisation, stacked display, peak picking, band fitting (Lorentzian,
+  Gaussian, pseudo-Voigt, with uncertainties), band integration, and CSV export
+  of the processed spectra and every results table. A zip of the session's raw
+  scans is at the bottom.
 
-The instrument runs entirely in the browser. Canvas rendering, keyboard jogging
-and live focus feedback need sub-100 ms response, and routing those through
-Streamlit's rerun cycle would make it unusable. Streamlit assigns identities and
-collects submissions; it does no simulation work, so a full lab section costs the
-server essentially nothing.
+Scans live in the browser page. Reloading or closing it loses them, so students
+should save CSVs (or the zip) before leaving.
 
-## Files
+## Names
 
-| file | role |
-|---|---|
-| `raman-sim.html` | The instrument. **One copy, used two ways** — open it directly in a browser, or let `app.py` embed it |
-| `app.py` | Streamlit wrapper: roster, embedding, submission review |
-| `labdata.py` | Parsing and acquisition checks. No Streamlit import, so it is usable from a notebook or a grading script |
-| `make_sprites.py` | Cuts crystal sprites out of powder micrographs for the renderer |
-
-There is deliberately no separate Streamlit build of the instrument. When the
-wrapper embeds it, it sets `window.LAB_PRESET` to pin the student ID; run
-standalone that object is absent and the instrument uses the ID in its own
-field. Keeping two copies in step by hand is the kind of thing that works until
-it quietly doesn't, and `labdata.py` would only agree with one of them.
-
-## Student identity
-
-The ID seeds the noise, detector gain and parfocality offsets, so a given ID
-reproduces its session exactly while no two students get identical data. Set it
-in the sidebar; leave **Lock the ID** on so students cannot edit the seed to fish
-for a cleaner dataset.
+The first name seeds detector gain, noise and focus offsets, so the same name
+reproduces the same session and different names get different data. It is
+case-insensitive. Two students with the same first name get identical data;
+have one add an initial. Nothing is stored on the server.
 
 ## The slide
 
-Five capillary tubes, numbered left to right, at stage X = −6.4, −3.2, 0, 3.2,
-6.4 mm. Three hold glycine polymorphs (α, β, γ); two hold CHCl₃ and CDCl₃.
+Five capillaries, numbered 1–5 left to right in the instrument's readout and
+exports. The arrangement is the same for everyone and the instrument never names
+the contents:
 
-**Which tube holds what is shuffled per student**, seeded from the ID, so no two
-students get the same slide. The tubes are visually identical apart from powder
-versus liquid — only the spectrum distinguishes them, which is the exercise.
+| tube | stage X (mm) | contents |
+|---|---|---|
+| Tube 1 | −6.4 | α-glycine (powder) |
+| Tube 2 | −3.2 | β-glycine (powder) |
+| Tube 3 | 0.0 | γ-glycine (powder) |
+| Tube 4 | 3.2 | CHCl₃ (liquid) |
+| Tube 5 | 6.4 | CDCl₃ (liquid) |
 
-Two things students can get out of it:
+To change the order, reorder `CONTENTS` in `instrument/index.html`; entry *k*
+goes in tube *k*.
+
+Things students can get out of it:
 
 - **Polymorphs.** α and β glycine differ by ~4 cm⁻¹ at the CCN stretch (893 vs
   889), which this spectrometer cannot resolve. They separate on the lattice
@@ -62,63 +62,16 @@ Two things students can get out of it:
   a ratio of 1.338 against the harmonic prediction √(μ_D/μ_H) = 1.363. The gap
   is anharmonicity. CDCl₃ also carries a small residual 3019 band at ~99.8 atom % D.
 
-## Grading
+## Files
 
-The export omits both which tube was measured and what was in it. `labdata.py`
-infers the tube from the stage coordinates and recomputes the contents from the
-student ID, so the file never gives the identification away.
+| file | role |
+|---|---|
+| `instrument/index.html` | The instrument. One copy: open it directly in a browser to use it standalone, or let `app.py` serve it |
+| `app.py` | Streamlit app: name, instrument, Analysis tab |
+| `labdata.py` | Parsing and spectral processing. No Streamlit import, so it works from a notebook |
+| `make_sprites.py` | Cuts crystal sprites out of powder micrographs for the renderer |
 
-Checks applied to each submission:
-
-- excitation beam used, not the alignment attenuator
-- white-light illuminator closed
-- objective adequate for measurement (5× is for finding, not measuring)
-- beam inside the bore rather than on the capillary wall
-- enough accumulations, and adequate S/N
-- detector not saturated
-- strongest band consistent with what that tube holds for that student
-- for glycine, whether the lattice modes that separate the polymorphs were captured
-
-The **Class view** tab has an answer key: paste a roster and get each student's
-arrangement. Or from Python:
-
-```python
-from labdata import answer_key
-answer_key(["student-01", "student-02"]).to_csv("key.csv", index=False)
-```
-
-With 24 students drawing from 120 possible arrangements, expect a couple of
-pairs to share one. That is harmless for marking but worth knowing if you seat
-students together.
-
-Use `labdata.py` directly for offline marking:
-
-```python
-from labdata import parse_csv, review, summarise
-reports = [review(parse_csv(open(p).read())) for p in paths]
-summarise(reports).to_csv("marks.csv", index=False)
-```
-
-## Editing the slide
-
-Tube positions and contents live in **both** `raman-sim.html` (`TUBE`,
-`SAMPLES`, `CONTENTS`) and `labdata.py` (`BORE_W`, `TUBES`, `CONTENTS`). Keep
-them in step, or grading will decode the wrong material. The order of `CONTENTS`
-matters on both sides — the shuffle depends on it.
-
-This is the one duplication left, and it is unavoidable in this shape: one side
-is JavaScript in the browser, the other Python on the server. If you expect to
-edit the slide often, have both read a shared JSON file instead.
-
-`labdata.py` ports the instrument's RNG so the shuffle reproduces exactly; that
-equivalence is worth re-checking if you touch either copy.
-
-## Downloads inside the frame
-
-On Streamlit versions with `st.iframe` the instrument is embedded with
-JavaScript and same-origin access, so the CSV download works normally. Older
-versions fall back to `components.v1.html`, whose sandbox can block downloads —
-the instrument has a **Show CSV text** button for that case, and the Submit tab
-accepts pasted text.
-
-`app.py` detects which API the installed version provides, so it runs on both.
+The instrument runs entirely in the browser; canvas rendering and keyboard
+jogging need faster response than Streamlit's rerun cycle gives. It talks to the
+app through Streamlit's component protocol (name in, scans out), written
+directly in the HTML so there is no build step.

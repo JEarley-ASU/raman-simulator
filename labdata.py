@@ -1,59 +1,29 @@
 """
-Parsing and checking for spectra exported by the Raman simulator.
+Reading and processing spectra exported by the Raman simulator.
 
-Free of Streamlit imports, so it can be unit tested and reused from a notebook
-or a batch marking script.
+Free of Streamlit imports, so the same functions work from a notebook:
 
-The slide holds five capillaries: three glycine polymorphs and the
-chloroform/deuterochloroform pair. Which tube holds what is shuffled from the
-student ID, so the arrangement differs for every student and is recoverable here
-for marking. `assign_tubes` mirrors the shuffle in raman_sim.html exactly; if you
-change one, change both.
+    from labdata import parse_csv, despike, als_baseline
+    s = parse_csv(open("Maya_scan03.csv").read())
+    y = despike(s.y)
+    y = y - als_baseline(y)
+
+Processing follows the order a spectrometer package applies it in: cosmic rays
+first (they wreck every later step), then reference subtraction, baseline,
+smoothing and normalisation.
 """
 
 from __future__ import annotations
 
 import io
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
-
-# --------------------------------------------------------------------------
-# Slide geometry, mirroring TUBE and SAMPLES in raman_sim.html
-# --------------------------------------------------------------------------
-BORE_W = 0.80   # mm, bore width
-WALL_W = 0.26   # mm, glass wall thickness
-LEN_Y = 9.0     # mm, tube length
-
-TUBES = [
-    # label,    stage x, stage y
-    ("Tube 1", -6.40, 0.0),
-    ("Tube 2", -3.20, 0.0),
-    ("Tube 3",  0.00, 0.0),
-    ("Tube 4",  3.20, 0.0),
-    ("Tube 5",  6.40, 0.0),
-]
-
-# Order must match CONTENTS in raman_sim.html — the shuffle depends on it.
-CONTENTS = [
-    ("alpha_glycine", "\u03b1-glycine", "powder"),
-    ("beta_glycine",  "\u03b2-glycine", "powder"),
-    ("gamma_glycine", "\u03b3-glycine", "powder"),
-    ("chcl3",         "CHCl\u2083",     "liquid"),
-    ("cdcl3",         "CDCl\u2083",     "liquid"),
-]
-
-# Strongest band, plus the bands needed to separate near-identical materials.
-# The polymorphs sit ~4 cm-1 apart at the CCN stretch, which no teaching
-# spectrometer resolves, so the lattice modes below 300 cm-1 do the work.
-DIAGNOSTIC = {
-    "alpha_glycine": {"strongest": 893.0, "key_bands": [165, 198, 1324]},
-    "beta_glycine":  {"strongest": 889.0, "key_bands": [172, 215, 1340]},
-    "gamma_glycine": {"strongest": 877.0, "key_bands": [175, 251, 500]},
-    "chcl3":         {"strongest": 667.0, "key_bands": [262, 761, 3019]},
-    "cdcl3":         {"strongest": 651.0, "key_bands": [262, 737, 2256]},
-}
+from scipy import sparse
+from scipy.optimize import curve_fit
+from scipy.signal import find_peaks, medfilt, peak_widths, savgol_filter
+from scipy.sparse.linalg import spsolve
 
 NUMERIC_KEYS = {
     "scan", "stage_x_mm", "stage_y_mm", "focus_um", "NA",
@@ -61,56 +31,10 @@ NUMERIC_KEYS = {
     "total_exposure_s", "estimated_SNR",
 }
 BOOL_KEYS = {"illuminator_open"}
-FULL_WELL = 65535
-_M32 = 0xFFFFFFFF
 
 
 class ParseError(ValueError):
     """Raised when a file is not a spectrum export from this instrument."""
-
-
-# --------------------------------------------------------------------------
-# The seeded shuffle, ported from the instrument
-# --------------------------------------------------------------------------
-def _imul(a: int, b: int) -> int:
-    return (a * b) & _M32
-
-
-def hash_str(s: str) -> int:
-    """FNV-1a, matching hashStr() in the instrument."""
-    h = 2166136261
-    for ch in s:
-        h ^= ord(ch)
-        h = _imul(h, 16777619)
-    return h & _M32
-
-
-class Mulberry32:
-    """Matching mulberry32() in the instrument."""
-
-    def __init__(self, seed: int):
-        self.a = seed & _M32
-
-    def __call__(self) -> float:
-        self.a = (self.a + 0x6D2B79F5) & _M32
-        a = self.a
-        t = _imul(a ^ (a >> 15), 1 | a)
-        t = ((t + _imul(t ^ (t >> 7), 61 | t)) ^ t) & _M32
-        return ((t ^ (t >> 14)) & _M32) / 4294967296
-
-
-def assign_tubes(student: str) -> dict:
-    """Which material is in which tube, for this student.
-
-    Fisher-Yates driven by the same seed string the instrument uses, so this
-    reproduces the arrangement the student actually saw.
-    """
-    rng = Mulberry32(hash_str(f"{student}|tubes"))
-    pool = list(CONTENTS)
-    for i in range(len(pool) - 1, 0, -1):
-        j = int(rng() * (i + 1))
-        pool[i], pool[j] = pool[j], pool[i]
-    return {label: pool[k] for k, (label, _, _) in enumerate(TUBES)}
 
 
 # --------------------------------------------------------------------------
@@ -119,75 +43,24 @@ def assign_tubes(student: str) -> dict:
 @dataclass
 class Spectrum:
     meta: dict
-    data: pd.DataFrame
+    x: np.ndarray       # Raman shift, cm-1
+    y: np.ndarray       # mean counts per accumulation
+    source: str = ""    # file name, for uploads
 
     @property
-    def student(self) -> str:
-        return str(self.meta.get("student", "")).strip()
-
-    @property
-    def tube(self) -> str:
-        """Which tube the beam was in, from the stage coordinates. Deliberately
-        not written into the student's file."""
-        x, y = self.meta.get("stage_x_mm"), self.meta.get("stage_y_mm")
-        if x is None or y is None:
-            return "unknown"
-        for label, tx, ty in TUBES:
-            if abs(y - ty) > LEN_Y / 2:
-                continue
-            if abs(x - tx) <= BORE_W / 2:
-                return label
-            if abs(x - tx) <= BORE_W / 2 + WALL_W:
-                return f"{label} (glass wall)"
-        return "off tube"
-
-    @property
-    def material(self) -> tuple | None:
-        """(key, display name, phase) the student was actually sitting on."""
-        tube = self.tube.replace(" (glass wall)", "")
-        if not self.student or not tube.startswith("Tube"):
-            return None
-        return assign_tubes(self.student).get(tube)
-
-    def observed_band(self, window: int = 60) -> float | None:
-        """Strongest band above a local background, matching the estimator the
-        instrument uses."""
-        if self.data.empty:
-            return None
-        y = self.data["mean_counts"].rolling(5, center=True, min_periods=1).mean()
-        floor = y.rolling(2 * window + 1, center=True, min_periods=1).min()
-        height = y - floor
-        if height.isna().all():
-            return None
-        return float(self.data["wavenumber_cm-1"].iloc[int(height.idxmax())])
-
-    def intensity_at(self, wn: float, tol: float = 6.0) -> float | None:
-        """Peak height above a local floor near a given shift, for checking
-        whether a diagnostic band was actually captured."""
-        d = self.data
-        near = d[(d["wavenumber_cm-1"] - wn).abs() <= tol]
-        if near.empty:
-            return None
-        wide = d[(d["wavenumber_cm-1"] - wn).abs() <= 180]
-        return float(near["mean_counts"].max() - wide["mean_counts"].min())
-
-
-@dataclass
-class Check:
-    ok: bool
-    label: str
-    detail: str
-    severity: str = "warn"  # "warn" or "info"
-
-
-@dataclass
-class Report:
-    spectrum: Spectrum
-    checks: list = field(default_factory=list)
-
-    @property
-    def problems(self):
-        return [c for c in self.checks if not c.ok and c.severity == "warn"]
+    def label(self) -> str:
+        m = self.meta
+        if self.source:
+            parts = [self.source.rsplit(".", 1)[0]]
+        elif m.get("scan") is not None:
+            parts = [f"Scan {int(m['scan'])}"]
+        else:
+            parts = ["spectrum"]
+        if m.get("location"):
+            parts.append(str(m["location"]))
+        if m.get("objective"):
+            parts.append(str(m["objective"]))
+        return " · ".join(parts)
 
 
 def _coerce(key: str, raw: str):
@@ -202,7 +75,7 @@ def _coerce(key: str, raw: str):
     return raw
 
 
-def parse_csv(text: str | bytes) -> Spectrum:
+def parse_csv(text: str | bytes, source: str = "") -> Spectrum:
     """Read an export produced by the instrument's 'Save spectrum' button."""
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="replace")
@@ -230,133 +103,278 @@ def parse_csv(text: str | bytes) -> Spectrum:
     df = df.dropna(subset=["wavenumber_cm-1", "mean_counts"])
     if df.empty:
         raise ParseError("The file parsed but contains no usable rows.")
+    df = df.sort_values("wavenumber_cm-1")
 
-    return Spectrum(meta=meta, data=df.reset_index(drop=True))
+    return Spectrum(meta=meta,
+                    x=df["wavenumber_cm-1"].to_numpy(float),
+                    y=df["mean_counts"].to_numpy(float),
+                    source=source)
 
 
 # --------------------------------------------------------------------------
-# Checking
+# Processing
 # --------------------------------------------------------------------------
-def review(spec: Spectrum, *, min_accumulations: int = 4,
-           min_snr: float = 10.0) -> Report:
-    """Apply the acquisition-hygiene checks a demonstrator would apply."""
-    m, checks = spec.meta, []
+def despike(y: np.ndarray, threshold: float = 6.0) -> np.ndarray:
+    """Remove cosmic-ray spikes.
 
-    beam = str(m.get("beam_mode", "")).lower()
-    checks.append(Check(
-        beam == "excite", "Excitation beam",
-        "Acquired with the excitation beam." if beam == "excite"
-        else f"Beam was '{beam or 'unrecorded'}'. The alignment attenuator passes "
-             "~0.2%, so this spectrum carries almost no signal.",
-    ))
+    A spike and a sharp Raman band can be equally tall, so height alone cannot
+    separate them. Shape can: a spike is one to three pixels wide and has
+    almost dropped to the floor two pixels out, while a band of this
+    instrument's width is still above half height there.
+    """
+    y = np.asarray(y, float)
+    n = y.size
+    if n < 9:
+        return y.copy()
+    med = medfilt(y, 5)
+    resid = y - med
+    mad = np.median(np.abs(resid - np.median(resid))) * 1.4826 or 1.0
 
-    lamp = m.get("illuminator_open")
-    checks.append(Check(
-        lamp is False, "Illuminator closed",
-        "White light was closed." if lamp is False
-        else "Illuminator was left open; the broadband background will dominate.",
-    ))
+    pad = np.pad(y, 2, mode="edge")
+    flank = (pad[:-4] + pad[4:]) / 2           # y[i-2] and y[i+2]
+    floor = pd.Series(y).rolling(17, center=True, min_periods=1).min().to_numpy()
+    above = np.maximum(y - floor, 1e-12)
+    narrow = (y - flank) / above > 0.8
 
-    obj = str(m.get("objective", ""))
-    low = obj in ("5\u00d7", "5x")
-    checks.append(Check(
-        not low, "Objective",
-        f"Collected with {obj or 'an unrecorded objective'}." if not low
-        else "Collected at 5\u00d7. Its long depth response reaches straight "
-             "through the bore into the capillary wall, so expect glass bands on "
-             "top of the sample.",
-    ))
-
-    tube = spec.tube
-    on_wall = "glass wall" in tube
-    in_bore = tube.startswith("Tube") and not on_wall
-    checks.append(Check(
-        in_bore, "Beam in the bore",
-        f"Beam was inside {tube}." if in_bore
-        else (f"Beam was on the wall of {tube.replace(' (glass wall)', '')}, not "
-              "in the bore — this is a spectrum of the capillary."
-              if on_wall else "Beam was not on any tube."),
-    ))
-
-    n = m.get("accumulations")
-    checks.append(Check(
-        n is not None and n >= min_accumulations, "Accumulations",
-        f"{int(n)} accumulations (\u221an gain {math.sqrt(n):.2f}\u00d7)." if n
-        else "Accumulation count missing.",
-    ))
-
-    snr = m.get("estimated_SNR")
-    checks.append(Check(
-        snr is not None and snr >= min_snr, "Signal to noise",
-        f"S/N {snr:.1f}." if snr is not None else "No S/N recorded.",
-    ))
-
-    peak = float(spec.data["mean_counts"].max())
-    checks.append(Check(
-        peak < FULL_WELL * 0.99, "Detector headroom",
-        f"Peak {peak:,.0f} counts." if peak < FULL_WELL * 0.99
-        else f"Peak reached {peak:,.0f} counts — the detector saturated and the "
-             "band shape is clipped.",
-    ))
-
-    mat = spec.material
-    if mat and in_bore:
-        key, name, _ = mat
-        exp = DIAGNOSTIC[key]["strongest"]
-        obs = spec.observed_band()
-        if obs is not None:
-            good = abs(obs - exp) <= 10
-            checks.append(Check(
-                good, "Band position",
-                f"Strongest band at {obs:.0f} cm\u207b\u00b9; {tube} holds {name}, "
-                f"whose strongest band is {exp:.0f} cm\u207b\u00b9."
-                + ("" if good else "  The spectrum is probably dominated by glass "
-                   "or background rather than by the sample."),
-                severity="info" if good else "warn",
-            ))
-
-        # The polymorphs differ by ~4 cm-1 at the CCN stretch, so record whether
-        # the lattice region that actually separates them was captured.
-        if key.endswith("glycine"):
-            lattice = [b for b in DIAGNOSTIC[key]["key_bands"] if b < 300]
-            got = [b for b in lattice if (spec.intensity_at(b) or 0) > 0.05 * peak]
-            checks.append(Check(
-                len(got) == len(lattice), "Lattice modes",
-                f"Captured {len(got)} of {len(lattice)} lattice bands "
-                f"({', '.join(str(b) for b in lattice)} cm\u207b\u00b9). These "
-                "separate the polymorphs; the CCN stretch alone cannot.",
-                severity="info",
-            ))
-
-    return Report(spectrum=spec, checks=checks)
+    spike = (resid > threshold * mad) & narrow
+    if not spike.any():
+        return y.copy()
+    spike = np.convolve(spike, np.ones(3), mode="same") > 0
+    good = ~spike
+    out = y.copy()
+    idx = np.arange(n)
+    out[spike] = np.interp(idx[spike], idx[good], y[good])
+    return out
 
 
-def summarise(reports: list) -> pd.DataFrame:
-    """One row per submission, for an at-a-glance class view."""
-    rows = []
-    for rep in reports:
-        s, m = rep.spectrum, rep.spectrum.meta
-        mat = s.material
-        rows.append({
-            "student": s.student,
-            "scan": m.get("scan"),
-            "tube": s.tube,
-            "contents (key)": mat[1] if mat else "\u2014",
-            "objective": m.get("objective"),
-            "power %": m.get("laser_power_pct"),
-            "accumulations": m.get("accumulations"),
-            "S/N": m.get("estimated_SNR"),
-            "band cm-1": s.observed_band(),
-            "issues": len(rep.problems),
-        })
-    return pd.DataFrame(rows)
+def poly_baseline(x: np.ndarray, y: np.ndarray, order: int = 3,
+                  iterations: int = 100) -> np.ndarray:
+    """Iterative modified polynomial fit (Lieber & Mahadevan-Jansen, 2003).
+
+    Each pass clips the data down to the current fit, so the polynomial sinks
+    under the bands and settles on the background.
+    """
+    xs = (x - x.mean()) / (x.std() or 1.0)
+    work = np.asarray(y, float).copy()
+    base = work
+    for _ in range(iterations):
+        base = np.polyval(np.polyfit(xs, work, order), xs)
+        nxt = np.minimum(work, base)
+        if np.allclose(nxt, work):
+            break
+        work = nxt
+    return base
 
 
-def answer_key(students: list) -> pd.DataFrame:
-    """Which tube holds what, for each student. The instructor's crib sheet."""
-    rows = []
-    for st in students:
-        a = assign_tubes(st)
-        rows.append({"student": st,
-                     **{label: a[label][1] for label, _, _ in TUBES}})
-    return pd.DataFrame(rows)
+def als_baseline(y: np.ndarray, lam: float = 1e6, p: float = 0.01,
+                 iterations: int = 10) -> np.ndarray:
+    """Asymmetric least squares baseline (Eilers & Boelens, 2005).
+
+    lam sets stiffness; p is the weight given to points above the baseline, so
+    small p keeps the baseline under the bands.
+    """
+    y = np.asarray(y, float)
+    n = y.size
+    D = sparse.diags([1.0, -2.0, 1.0], [0, -1, -2], shape=(n, n - 2))
+    P = lam * D.dot(D.T)
+    w = np.ones(n)
+    z = y
+    for _ in range(iterations):
+        W = sparse.spdiags(w, 0, n, n)
+        z = spsolve(sparse.csc_matrix(W + P), w * y)
+        w = p * (y > z) + (1 - p) * (y < z)
+    return z
+
+
+def smooth(y: np.ndarray, window: int = 9, order: int = 3) -> np.ndarray:
+    """Savitzky-Golay smoothing. Window is in pixels and forced odd."""
+    window = max(int(window) | 1, order + 2 | 1)
+    if window > y.size:
+        return y.copy()
+    return savgol_filter(y, window, order)
+
+
+def normalise(x: np.ndarray, y: np.ndarray, mode: str,
+              band: tuple[float, float] | None = None) -> np.ndarray:
+    if mode == "max":
+        d = np.max(y)
+    elif mode == "area":
+        d = np.trapezoid(y, x) if hasattr(np, "trapezoid") else np.trapz(y, x)
+    elif mode == "band" and band:
+        sel = (x >= band[0]) & (x <= band[1])
+        d = np.max(y[sel]) if sel.any() else 0
+    else:
+        return y
+    return y / d if d else y
+
+
+# --------------------------------------------------------------------------
+# Peaks
+# --------------------------------------------------------------------------
+def noise_level(y: np.ndarray) -> float:
+    """Robust noise estimate from point-to-point differences, which bands and
+    sloping backgrounds barely affect."""
+    d = np.diff(np.asarray(y, float))
+    return float(np.median(np.abs(d - np.median(d))) * 1.4826 / np.sqrt(2)) or 1.0
+
+
+def pick_peaks(x: np.ndarray, y: np.ndarray, snr: float = 8.0,
+               min_sep: float = 10.0, min_fwhm: float = 5.0) -> pd.DataFrame:
+    """Peak positions, heights and FWHM.
+
+    A peak must stand `snr` noise-widths above its surroundings and be at
+    least `min_fwhm` cm-1 wide, so single-pixel noise excursions do not
+    qualify. min_sep is in cm-1.
+    """
+    step = float(np.median(np.diff(x))) or 1.0
+    idx, props = find_peaks(y, prominence=snr * noise_level(y),
+                            width=min_fwhm / step,
+                            distance=max(1, int(min_sep / step)))
+    if idx.size == 0:
+        return pd.DataFrame(columns=["shift_cm-1", "height", "prominence",
+                                     "FWHM_cm-1"])
+    widths = peak_widths(y, idx, rel_height=0.5)[0] * step
+    return pd.DataFrame({
+        "shift_cm-1": x[idx].round(1),
+        "height": y[idx],
+        "prominence": props["prominences"],
+        "FWHM_cm-1": widths.round(1),
+    })
+
+
+def integrate(x: np.ndarray, y: np.ndarray, lo: float, hi: float,
+              local_baseline: bool = True) -> float:
+    """Band area between two shifts, optionally above a straight line drawn
+    between the end points."""
+    sel = (x >= lo) & (x <= hi)
+    if sel.sum() < 2:
+        return float("nan")
+    xs, ys = x[sel], y[sel]
+    if local_baseline:
+        ys = ys - np.interp(xs, [xs[0], xs[-1]], [ys[0], ys[-1]])
+    trap = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+    return float(trap(ys, xs))
+
+
+# --------------------------------------------------------------------------
+# Band fitting
+# --------------------------------------------------------------------------
+SHAPES = ("Lorentzian", "Gaussian", "Pseudo-Voigt")
+_G = 2 * np.sqrt(2 * np.log(2))     # FWHM / sigma
+
+
+def _lor(x, c, f):
+    return 1 / (1 + ((x - c) / (f / 2)) ** 2)
+
+
+def _gau(x, c, f):
+    return np.exp(-0.5 * ((x - c) / (f / _G)) ** 2)
+
+
+def _model(shape: str, n: int):
+    """Sum of n bands on a straight background. Per band the parameters are
+    (height, centre, FWHM), plus eta for pseudo-Voigt."""
+    k = 4 if shape == "Pseudo-Voigt" else 3
+
+    def band(x, q):
+        h, c, w = q[:3]
+        if shape == "Lorentzian":
+            return h * _lor(x, c, w)
+        if shape == "Gaussian":
+            return h * _gau(x, c, w)
+        return h * (q[3] * _lor(x, c, w) + (1 - q[3]) * _gau(x, c, w))
+
+    def f(x, *p):
+        out = p[-2] + p[-1] * x
+        for i in range(n):
+            out = out + band(x, p[k * i: k * (i + 1)])
+        return out
+    return f, band, k
+
+
+def _area(shape, h, w, eta=None):
+    lor = np.pi * h * w / 2
+    gau = h * (w / _G) * np.sqrt(2 * np.pi)
+    if shape == "Lorentzian":
+        return lor
+    if shape == "Gaussian":
+        return gau
+    return eta * lor + (1 - eta) * gau
+
+
+@dataclass
+class Fit:
+    x: np.ndarray
+    y: np.ndarray
+    total: np.ndarray
+    background: np.ndarray
+    components: list
+    table: pd.DataFrame
+    r2: float
+
+
+def fit_bands(x: np.ndarray, y: np.ndarray, lo: float, hi: float,
+              shape: str = "Lorentzian", n_bands: int = 1,
+              guesses: list[float] | None = None) -> Fit:
+    """Least-squares fit of n bands plus a linear background over [lo, hi].
+
+    Starting centres come from `guesses` if given, otherwise from the most
+    prominent maxima in the window.
+    """
+    sel = (x >= lo) & (x <= hi)
+    xs, ys = x[sel], y[sel]
+    if xs.size < 6:
+        raise ValueError("Fit window holds too few points; widen it.")
+
+    centres = list(guesses or [])[:n_bands]
+    if len(centres) < n_bands:
+        idx, pr = find_peaks(ys, prominence=0)
+        order = np.argsort(pr["prominences"])[::-1]
+        for i in idx[order]:
+            if len(centres) >= n_bands:
+                break
+            if all(abs(xs[i] - c) > 4 for c in centres):
+                centres.append(float(xs[i]))
+    while len(centres) < n_bands:
+        centres.append(float(lo + (hi - lo) * (len(centres) + 1) / (n_bands + 1)))
+    centres.sort()
+
+    f, band, k = _model(shape, n_bands)
+    base0 = float(np.min(ys))
+    span = float(np.ptp(ys)) or 1.0
+    p0, lb, ub = [], [], []
+    for c in centres:
+        h0 = max(float(np.interp(c, xs, ys)) - base0, 0.05 * span)
+        p0 += [h0, c, 15.0]
+        lb += [0, lo, 1.0]
+        ub += [np.inf, hi, hi - lo]
+        if k == 4:
+            p0.append(0.5); lb.append(0); ub.append(1)
+    p0 += [base0, 0.0]
+    lb += [-np.inf, -np.inf]
+    ub += [np.inf, np.inf]
+
+    popt, pcov = curve_fit(f, xs, ys, p0=p0, bounds=(lb, ub), maxfev=20000)
+    perr = np.sqrt(np.clip(np.diag(pcov), 0, None))
+
+    bg = popt[-2] + popt[-1] * xs
+    rows, comps = [], []
+    for i in range(n_bands):
+        h, c, w = popt[k * i: k * i + 3]
+        dh, dc, dw = perr[k * i: k * i + 3]
+        eta = popt[k * i + 3] if k == 4 else None
+        comps.append(band(xs, popt[k * i: k * (i + 1)]))
+        row = {"band": i + 1,
+               "centre_cm-1": c, "± centre": dc,
+               "FWHM_cm-1": w, "± FWHM": dw,
+               "height": h, "± height": dh,
+               "area": _area(shape, h, w, eta)}
+        if eta is not None:
+            row["eta (Lorentzian fraction)"] = eta
+        rows.append(row)
+
+    total = f(xs, *popt)
+    ss_res = float(np.sum((ys - total) ** 2))
+    ss_tot = float(np.sum((ys - ys.mean()) ** 2)) or 1.0
+    return Fit(x=xs, y=ys, total=total, background=bg, components=comps,
+               table=pd.DataFrame(rows), r2=1 - ss_res / ss_tot)
