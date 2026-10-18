@@ -986,19 +986,6 @@ function drawScene(P, x0, x1, y0, y1, lit){
       liq.addColorStop(1,   'rgba(176,198,196,.34)');
       g.fillStyle = liq;
       g.fillRect(bx, by, bw, bh);
-      // the odd bubble, which is often the only thing in a liquid to focus on
-      eachCell(0.5, x0, x1, y0, y1, 'bub' + s.label, (mx, my, rng) => {
-        if (rng() > 0.45) return;
-        const br = (12 + rng() * 55) / 1000 * k;
-        if (br < 0.6) return;
-        const X = P.sx(mx), Y = P.sy(my);
-        g.beginPath(); g.arc(X, Y, br, 0, 6.2832);
-        g.fillStyle = 'rgba(210,230,228,.14)'; g.fill();
-        g.lineWidth = Math.max(0.7, br * 0.16);
-        g.strokeStyle = 'rgba(248,255,253,.45)'; g.stroke();
-        g.beginPath(); g.arc(X - br * .3, Y - br * .3, br * .22, 0, 6.2832);
-        g.fillStyle = 'rgba(255,255,255,.5)'; g.fill();
-      });
     }
     g.restore();
 
