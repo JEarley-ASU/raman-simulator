@@ -154,6 +154,10 @@
     .rig{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;height:auto}
     .col{overflow:visible}body{height:auto}
   }
+  /* Embedded, the frame grows to fit the content and the host page scrolls. */
+  html.hosted, html.hosted body{height:auto}
+  html.hosted .rig{height:auto}
+  html.hosted .col{overflow:visible}
   @media (prefers-reduced-motion:reduce){.acq-bar div{transition:none}}
 </style>
 </head>
@@ -1751,11 +1755,18 @@ updateEstimate();
    every rerun, so act only on a change.                                       */
 if (HOSTED){
   $('student').readOnly = true;
+  document.documentElement.classList.add('hosted');
+  let lastH = 0;
+  const fit = () => {
+    const h = Math.ceil(document.documentElement.scrollHeight);
+    if (h !== lastH){ lastH = h; toHost('streamlit:setFrameHeight', {height: h}); }
+  };
+  new ResizeObserver(fit).observe(document.body);
   window.addEventListener('message', e => {
     const d = e.data;
     if (!d || d.type !== 'streamlit:render') return;
     const a = d.args || {};
-    if (a.height) toHost('streamlit:setFrameHeight', {height: a.height});
+    lastH = 0; fit();
     if (a.name && a.name !== $('student').value){
       $('student').value = a.name;
       refreshGain(); state.scanIndex = 0; state.scans = [];

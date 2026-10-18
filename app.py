@@ -54,10 +54,7 @@ with st.sidebar:
     name = st.text_input(
         "First name", placeholder="e.g. Maya",
         help="Seeds the detector gain, noise and focus offsets. Use the same "
-             "name each time to get the same instrument back.").strip()
-    height = st.slider("Instrument panel height (px)", 700, 1800, 1150, 50,
-                       help="The instrument fills its frame. Raise this on a "
-                            "tall monitor.")
+                 "name each time to get the same instrument back.").strip()
     st.divider()
     st.caption(
         "Scans you collect appear in the Analysis tab. They last until you "
@@ -81,8 +78,7 @@ with tab_run:
             "a tube at 5×, switch up to measure, frame and focus on the "
             "alignment beam, then acquire."
         )
-        scans = _instrument(name=name, height=height, key="instrument",
-                            default=[]) or []
+        scans = _instrument(name=name, key="instrument", default=[]) or []
 
 
 # --------------------------------------------------------------------------
