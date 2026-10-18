@@ -56,8 +56,6 @@ class Spectrum:
             parts = [f"Scan {int(m['scan'])}"]
         else:
             parts = ["spectrum"]
-        if m.get("location"):
-            parts.append(str(m["location"]))
         if m.get("objective"):
             parts.append(str(m["objective"]))
         return " · ".join(parts)

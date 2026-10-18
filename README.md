@@ -37,9 +37,11 @@ have one add an initial. Nothing is stored on the server.
 
 ## The slide
 
-Five capillaries, numbered 1–5 left to right in the instrument's readout and
-exports. The arrangement is the same for everyone and the instrument never names
-the contents:
+Five capillaries, numbered 1–5 left to right. The arrangement is the same for
+everyone. The instrument never says which tube is under the beam, in the
+readout, the log or the exports; students work it out by scanning across the
+slide, and the files record only stage coordinates. The positions and contents,
+for your reference:
 
 | tube | stage X (mm) | contents |
 |---|---|---|

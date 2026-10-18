@@ -1404,10 +1404,9 @@ function updateReadout(){
       '  <i>Z </i>' + fmt(state.z, 2) + ' µm</span>' +
     '<span><i>objective </i>' + o.name + '  NA ' + o.NA.toFixed(2) +
       '  <i>depth </i>±' + o.dofUm.toFixed(1) + ' µm</span>' +
-    '<span><i>at beam </i>' +
-      (s ? s.label : 'bare slide') +
+    '<span><i>focus </i>' +
       '<span class="' + (sharp ? 'good' : '') + '">' +
-      (sharp ? '  in focus' : '  off focus by ' + df.toFixed(1) + ' µm') + '</span></span>' +
+      (sharp ? 'in focus' : 'off by ' + df.toFixed(1) + ' µm') + '</span></span>' +
     '<span' + (sat ? ' class="sat"' : '') + '><i>live </i>' +
       (state.beam !== 'off' ? Math.round(peak).toLocaleString() + ' cts/exposure' +
         (sat ? '  SATURATED' : '') : '—') + '</span>';
@@ -1507,7 +1506,7 @@ async function autofocus(){
   redraw();
   state.focusing = false;
   $('afBtn').disabled = false;
-  log('Autofocus settled at Z ' + best.toFixed(2) + ' µm on ' + s.label + '.', 'g');
+  log('Autofocus settled at Z ' + best.toFixed(2) + ' µm.', 'g');
 }
 
 /* ---------- acquisition ---------- */
@@ -1525,14 +1524,13 @@ async function acquire(){
 
   const N = state.accum, t = state.tint, o = OBJ();
   const s = underBeam();
-  const where = s ? s.label : 'bare slide';
   state.meta = {name: operatorName(), scan: state.scanIndex,
                 x: state.x, y: state.y, z: state.z, obj: o.name, NA: o.NA,
-                power: state.power, tint: t, accum: N, region: where,
+                power: state.power, tint: t, accum: N,
                 beam: state.beam, illum: state.illum,
                 started: new Date().toISOString()};
 
-  log('Scan ' + state.scanIndex + ' started — ' + where + ' at (' + fmt(state.x,3) + ', ' +
+  log('Scan ' + state.scanIndex + ' started at (' + fmt(state.x,3) + ', ' +
       fmt(state.y,3) + ') mm, ' + o.name + ', ' + state.power + '%, ' +
       fmt(t,1) + ' s \u00D7 ' + N + '.', 'em');
   if (state.beam === 'align')
@@ -1574,7 +1572,7 @@ async function acquire(){
       $('snrOut').textContent = 'S/N ' + est.snr.toFixed(1);
       $('maxOut').textContent = 'peak ' + Math.round(est.peak).toLocaleString() +
                                 ' counts @ ' + est.peakWn.toFixed(0) + ' cm\u207B\u00B9';
-      $('plotHint').textContent = where + ' · ' + o.name + ' · ' + state.count + ' accumulations';
+      $('plotHint').textContent = o.name + ' · ' + state.count + ' accumulations';
       log('  n=' + String(state.count).padStart(2) + '   S/N ' + est.snr.toFixed(1).padStart(6) +
           '   noise ' + est.noise.toFixed(1).padStart(6) + ' cts   peak ' +
           Math.round(est.peak).toLocaleString().padStart(7));
@@ -1623,7 +1621,6 @@ function buildCSV(){
   const L = [
     '# Raman microspectrometer - simulated acquisition',
     '# name,' + m.name, '# scan,' + m.scan, '# started,' + m.started,
-    '# location,' + m.region,
     '# stage_x_mm,' + m.x, '# stage_y_mm,' + m.y, '# focus_um,' + m.z,
     '# objective,' + m.obj, '# NA,' + m.NA,
     '# laser_power_pct,' + m.power, '# integration_s,' + m.tint,
@@ -1774,8 +1771,7 @@ redraw();
 drawPlot();
 log('Instrument ready. Grating 1800 gr/mm, detector at \u221260 °C, ' +
     OBJ().name + ' objective in the path.');
-log('Five capillaries on the stage, numbered left to right at X = \u22126.4, '
-  + '\u22123.2, 0, 3.2 and 6.4 mm.');
+log('Five capillaries on the stage, numbered 1 to 5 from left to right.');
 log('Sweep at low magnification to find a tube, then switch up to measure.');
 log('Record the stage coordinates of anything you want to come back to.');
 </script>
