@@ -1489,7 +1489,11 @@ function setObjective(i){
   redraw();
 }
 
-/* Autofocus hunts for the sharpest plane, as the real one does. */
+/* Autofocus hunts for the sharpest plane, as the real one does. It locks onto
+   the attenuated alignment spot; with the beam off there is nothing to lock
+   onto, and the full excitation beam blooms the camera, so either way it
+   settles at a wrong plane a few depths of field from focus.                */
+let afCount = 0;
 async function autofocus(){
   if (state.focusing || state.running) return;
   const s = underBeam();
@@ -1505,6 +1509,11 @@ async function autofocus(){
     const v = focusFactor(s);
     if (v > bestV){ bestV = v; best = state.z; }
     await sleep(28);
+  }
+  if (state.beam !== 'align'){
+    const rng = mulberry32(hashStr(studentSeed() + '|af' + afCount++));
+    const off = Math.max(4, OBJ().dofUm * (3 + 5 * rng()));
+    best = +(best + (rng() < 0.5 ? -off : off)).toFixed(3);
   }
   state.z = best;
   redraw();
