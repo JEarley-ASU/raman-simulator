@@ -58,6 +58,8 @@ class Spectrum:
             parts = ["spectrum"]
         if m.get("objective"):
             parts.append(str(m["objective"]))
+        if m.get("spectral_range") == "low":
+            parts.append("low wavenumber")
         return " · ".join(parts)
 
 

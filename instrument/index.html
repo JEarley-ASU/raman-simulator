@@ -123,7 +123,7 @@
   .params{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:13px;
     margin-top:14px;padding-top:14px;border-top:1px solid var(--rule)}
   .params .f{display:grid;gap:5px}
-  .params .f > span{font-size:12px;color:var(--ink-dim)}
+  .params .f > span,.params .f > label{font-size:12px;color:var(--ink-dim)}
   .params .f b{font-family:var(--mono);font-weight:500}
   .acq-bar{margin-top:14px;height:5px;background:var(--panel-2);border-radius:3px;overflow:hidden}
   .acq-bar div{height:100%;width:0;background:var(--live);transition:width .08s linear}
@@ -281,6 +281,11 @@
       <div class="f"><span>Accumulations</span>
         <input type="range" id="accum" min="1" max="64" step="1" value="4">
         <b id="accumOut">4</b></div>
+      <div class="f"><label for="range">Spectral range</label>
+        <select id="range">
+          <option value="standard" selected>150–3200 cm⁻¹ · edge filter</option>
+          <option value="low">10–610 cm⁻¹ · notch filters</option>
+        </select></div>
     </div>
 
     <div class="acq-bar"><div id="bar"></div></div>
@@ -297,7 +302,9 @@
     <p class="note">
       Every accumulation comes from a seeded generator, so a name reproduces its run exactly,
       while each new acquisition on the same spot gets fresh noise. Leave the white light on and it
-      will swamp the detector, as it does on the bench.
+      will swamp the detector, as it does on the bench. The edge filter stops everything below
+      150 cm⁻¹; to reach lattice modes, swap in the notch filters, which cover only a narrow
+      window and let a wing of laser light through near their edge.
     </p>
   </section>
 
@@ -358,11 +365,24 @@ const CONFIG = {
   start:  {x: 4.6, y: -2.2},
 
   // Detector
-  wnMin: 150, wnMax: 3200, nPixels: 1024,   // low end reaches the glycine lattice modes
+  nPixels: 1024,
+  /* Two ways to keep the laser line off the detector. The edge filter passes
+     everything above its cut-on, so one grating position spans the fingerprint
+     and C-H regions but nothing below 150 cm-1. Swapping in notch filters and
+     turning the grating to higher dispersion reaches the lattice modes, over a
+     window too narrow to hold anything else. snrWindow is a stretch clear of
+     every species in that window. cutOn and edgeW set where the filter
+     reaches half transmission and how steeply; only the notch lets a wing of
+     laser light through.                                                     */
+  ranges: {
+    standard: {wnMin: 150, wnMax: 3200, filter: 'edge', cutOn: 152, edgeW: 4, wing: 0,
+               tick: 400, snrWindow: [1750, 2120], label: '150\u20133200 cm\u207b\u00b9, edge filter'},
+    low:      {wnMin: 10,  wnMax: 610,  filter: 'notch', cutOn: 14, edgeW: 2.5, wing: 1,
+               tick: 100, snrWindow: [395, 465],   label: '10\u2013610 cm\u207b\u00b9, notch filters'},
+  },
   readNoise: 12, darkRate: 3, fullWell: 65535,
   peakCountsRef: 7000,       // strongest band, 100% power, 1 s, in focus, at refNA
   cosmicPerSecond: 0.025,
-  snrWindow: [1750, 2120],   // clear of every species here, including C-D at 2256
   illuminatorLeak: 22000,    // counts/s of broadband light if the illuminator is left open
 };
 
@@ -382,44 +402,69 @@ const SAMPLES = [
 /* What goes in them, in tube order: CONTENTS[0] is in SAMPLES[0] and so on.
    The arrangement is the same for everyone and is never shown by the
    instrument, which labels tubes by number only.                             */
+/* elastic: Rayleigh scattering relative to the strongest Raman band. A powder
+   scatters far more than a clear liquid, so its laser wing reaches further
+   past the notch filters.                                                    */
 const CONTENTS = [
-  {key: "alpha_glycine", name: "\u03b1-glycine", phase: "powder", scale: 0.52, fluor: 0.18},
-  {key: "beta_glycine",  name: "\u03b2-glycine", phase: "powder", scale: 0.46, fluor: 0.22},
-  {key: "gamma_glycine", name: "\u03b3-glycine", phase: "powder", scale: 0.50, fluor: 0.16},
-  {key: "chcl3",         name: "CHCl\u2083",     phase: "liquid", scale: 0.95, fluor: 0.05},
-  {key: "cdcl3",         name: "CDCl\u2083",     phase: "liquid", scale: 0.92, fluor: 0.05},
+  {key: "alpha_glycine", name: "\u03b1-glycine", phase: "powder", scale: 0.52, fluor: 0.18, elastic: 2.5},
+  {key: "beta_glycine",  name: "\u03b2-glycine", phase: "powder", scale: 0.46, fluor: 0.22, elastic: 2.5},
+  {key: "gamma_glycine", name: "\u03b3-glycine", phase: "powder", scale: 0.50, fluor: 0.16, elastic: 2.5},
+  {key: "chcl3",         name: "CHCl\u2083",     phase: "liquid", scale: 0.95, fluor: 0.05, elastic: 0.4},
+  {key: "cdcl3",         name: "CDCl\u2083",     phase: "liquid", scale: 0.92, fluor: 0.05, elastic: 0.4},
 ];
 
 /* ---- Spectral library ----
    Band positions follow the published Raman spectra. Replace a peak list with
    your own measurement as:  alpha_glycine: {data: {wn: [...], I: [...]}}     */
 const SPECTRA = {
-  // Polymorphs share the molecule, so they differ in the lattice region below
-  // ~260 cm-1 and in the CCN stretch near 880-895. alpha and beta sit only
-  // 4 cm-1 apart there, so the lattice modes are what actually separate them.
+  /* Glycine polymorphs, from Table II of Surovtsev et al., J. Chem. Phys. 137,
+     065103 (2012), measured at 78 K and shifted to room temperature: lattice
+     modes by the cubic-anharmonic fits in Surovtsev et al., J. Chem. Phys. 134,
+     045102 (2011), about -3 %, internal modes by -0.3 %. alpha's 71.5/77 doublet
+     merges above 280 K, so it is one broad band here. Only rows of Table II that
+     assign unambiguously to a polymorph are used. Peaks are [centre, height,
+     half width at half maximum].
+
+     The C-C stretch near 893 is the same in all three, so it cannot tell them
+     apart. The lattice modes below 200 cm-1 can, which is why the low-
+     wavenumber window exists; above 200, look at the CO2 bend (698/706/687), the
+     C-N stretch (1034/1042/1050) and the CH2 stretch (2972/2951/2962).        */
   alpha_glycine: {peaks: [
-    [165,.30,9],[198,.25,9],[358,.22,10],[503,.30,10],[601,.20,10],[697,.26,10],
-    [893,1.0,7],[1033,.42,8],[1105,.30,9],[1324,.46,9],[1410,.72,9],
-    [1440,.34,11],[1455,.26,11],[2972,.55,20],[3008,.40,18]]},
+    [53.3,1.3,3],[71.8,.75,4.5],[93.1,.3,3],[106.7,.65,3],[111.5,1.3,3],
+    [142.6,.3,3],[165.9,.65,3],[183.3,.65,3],
+    [361.9,.18,4.5],[482.5,.18,4.5],[601.2,.45,4.5],[698.4,.45,4.5],[892.8,1,4],
+    [927.2,.18,4.5],[1033.9,.45,4.5],[1112.7,.18,4.5],[1141.6,.45,4.5],
+    [1323.0,.6,4.5],[1411.8,.45,4.5],[1436.7,.45,4.5],[1500.5,.18,4.5],
+    [1569.3,.45,4.5],[1631.1,.18,4.5],[2972.5,.75,7],[3007.5,.75,7]]},
   beta_glycine: {peaks: [
-    [172,.26,9],[215,.32,9],[360,.20,10],[510,.26,10],[607,.18,10],[699,.24,10],
-    [889,1.0,7],[1030,.38,8],[1110,.34,9],[1340,.42,9],[1405,.70,9],
-    [1443,.32,11],[2960,.52,20],[3000,.38,18]]},
+    [61.5,.3,3],[84.5,.65,3],[108.0,1.3,3],[143.6,.65,3],[156.2,.65,3],
+    [163.9,.3,3],[181.4,.3,3],
+    [352.9,.45,4.5],[477.6,.45,4.5],[604.2,.6,4.5],[705.9,.45,4.5],[892.8,1,4],
+    [915.2,.45,4.5],[1041.9,.45,4.5],[1103.7,.18,4.5],[1149.5,.45,4.5],
+    [1306.1,.45,4.5],[1409.8,.45,4.5],[1445.7,.6,4.5],[1523.4,.18,4.5],
+    [1564.3,.18,4.5],[1680.9,.45,4.5],[2951,.75,7],[3008.5,.75,7]]},
   gamma_glycine: {peaks: [
-    [175,.34,9],[251,.24,9],[363,.24,10],[500,.34,10],[606,.20,10],[698,.26,10],
-    [877,1.0,7],[1038,.40,8],[1112,.28,9],[1326,.44,9],[1410,.70,9],
-    [1440,.32,11],[2970,.54,20],[3005,.40,18]]},
+    [90.8,1.3,3],[104.8,1.3,3],[107.7,.65,3],[129.0,.3,3],[142.6,1.3,3],
+    [153.3,1.3,3],[171.7,.65,3],[176.5,.3,3],[182.4,.3,3],
+    [362.9,.18,4.5],[503.5,.45,4.5],[568.3,.45,4.5],[686.9,.45,4.5],[893.8,1,4],
+    [929.2,.18,4.5],[1049.8,.6,4.5],[1123.6,.45,4.5],[1133.6,.18,4.5],
+    [1321.0,.6,4.5],[1396.8,.45,4.5],[1436.7,.6,4.5],[1498.5,.45,4.5],
+    [1576.3,.45,4.5],[1665.0,.18,4.5],[2962,.75,7],[2997,.75,7]]},
 
   // Chloroform: strong C-Cl symmetric stretch, and a C-H stretch at 3019 that
-  // moves to 2256 on deuteration.
+  // moves to 2256 on deuteration. The band at 0 is the liquid's reorientational
+  // wing, which only the low-wavenumber window sees.
   chcl3: {peaks: [
+    [0,.30,30],
     [262,.80,8],[366,.45,9],[667,1.0,7],[761,.35,9],[1216,.30,10],[3019,.70,16]]},
   cdcl3: {peaks: [
+    [0,.30,30],
     [262,.78,8],[366,.44,9],[651,1.0,7],[737,.33,9],[908,.28,9],[1210,.18,10],
     [2256,.68,14],
     [3019,.05,16]]},   // residual protonated chloroform, ~99.8 atom % D
 
-  glass: {peaks: [[555,.55,90],[1090,.40,110],[1550,.18,120]]},
+  // The broad band near 60 is the boson peak every glass shows.
+  glass: {peaks: [[60,.50,40],[555,.55,90],[1090,.40,110],[1550,.18,120]]},
 };
 
 /* ================================================================== */
@@ -459,41 +504,56 @@ CONFIG.objectives.forEach(o => {
 });
 
 /* ---------- detector axis and spectral profiles ---------- */
-const WN = new Float64Array(CONFIG.nPixels);
-for (let i = 0; i < CONFIG.nPixels; i++)
-  WN[i] = CONFIG.wnMin + (CONFIG.wnMax - CONFIG.wnMin) * i / (CONFIG.nPixels - 1);
-
-const PROFILE = {};
-for (const key in SPECTRA){
-  const s = SPECTRA[key];
-  const y = new Float64Array(CONFIG.nPixels);
+function libraryAt(s, x){
   if (s.data){
     const {wn, I} = s.data;
-    for (let i = 0; i < CONFIG.nPixels; i++){
-      const x = WN[i];
-      if (x <= wn[0] || x >= wn[wn.length-1]){ y[i] = 0; continue; }
-      let lo = 0, hi = wn.length - 1;
-      while (hi - lo > 1){ const m = (lo + hi) >> 1; if (wn[m] <= x) lo = m; else hi = m; }
-      const f = (x - wn[lo]) / (wn[hi] - wn[lo]);
-      y[i] = I[lo] + f * (I[hi] - I[lo]);
-    }
-  } else {
-    for (const [pos, amp, w] of s.peaks)
-      for (let i = 0; i < CONFIG.nPixels; i++){
-        const d = (WN[i] - pos) / w;
-        y[i] += amp / (1 + d * d);
-      }
+    if (x <= wn[0] || x >= wn[wn.length-1]) return 0;
+    let lo = 0, hi = wn.length - 1;
+    while (hi - lo > 1){ const m = (lo + hi) >> 1; if (wn[m] <= x) lo = m; else hi = m; }
+    return I[lo] + (x - wn[lo]) / (wn[hi] - wn[lo]) * (I[hi] - I[lo]);
   }
-  let mx = 0; for (let i = 0; i < CONFIG.nPixels; i++) if (y[i] > mx) mx = y[i];
-  if (mx > 0) for (let i = 0; i < CONFIG.nPixels; i++) y[i] /= mx;
-  PROFILE[key] = y;
+  let y = 0;
+  for (const [pos, amp, w] of s.peaks){ const d = (x - pos) / w; y += amp / (1 + d * d); }
+  return y;
 }
 
-const FLUOR = new Float64Array(CONFIG.nPixels);
-for (let i = 0; i < CONFIG.nPixels; i++){
-  const x = WN[i];
-  FLUOR[i] = 0.55 * Math.exp(-(x - 300) / 1400) + 0.75 * Math.exp(-Math.pow((x - 1500) / 900, 2));
+/* Scaled once, to the strongest band above 200 cm-1, so both windows share one
+   intensity scale and lattice modes can legitimately outshine the fingerprint. */
+const LIB_NORM = {};
+for (const key in SPECTRA){
+  let mx = 0;
+  for (let x = 200; x <= 3300; x += 0.5) mx = Math.max(mx, libraryAt(SPECTRA[key], x));
+  LIB_NORM[key] = mx || 1;
 }
+
+/* DISP: light per pixel relative to the standard window. Higher dispersion
+   spreads the same photons over more pixels, so the low window needs longer
+   exposures for the same counts.                                            */
+let WN, PROFILE, FLUOR, NOTCH, WING, RANGE, DISP;
+function setRange(id){
+  const r = CONFIG.ranges[id], n = CONFIG.nPixels, s0 = CONFIG.ranges.standard;
+  RANGE = id;
+  DISP = (r.wnMax - r.wnMin) / (s0.wnMax - s0.wnMin);
+  CONFIG.wnMin = r.wnMin; CONFIG.wnMax = r.wnMax; CONFIG.snrWindow = r.snrWindow;
+  WN = new Float64Array(n);
+  for (let i = 0; i < n; i++) WN[i] = r.wnMin + (r.wnMax - r.wnMin) * i / (n - 1);
+  PROFILE = {};
+  for (const key in SPECTRA){
+    const y = new Float64Array(n);
+    for (let i = 0; i < n; i++) y[i] = libraryAt(SPECTRA[key], WN[i]) / LIB_NORM[key];
+    PROFILE[key] = y;
+  }
+  FLUOR = new Float64Array(n);
+  NOTCH = new Float64Array(n);   // filter transmission
+  WING  = new Float64Array(n);   // laser light leaking past the notch edge
+  for (let i = 0; i < n; i++){
+    const x = WN[i];
+    FLUOR[i] = 0.55 * Math.exp(-(x - 300) / 1400) + 0.75 * Math.exp(-Math.pow((x - 1500) / 900, 2));
+    NOTCH[i] = 1 / (1 + Math.exp(-(x - r.cutOn) / r.edgeW));
+    WING[i]  = r.wing * NOTCH[i] * Math.exp(-(x - r.cutOn) / 4);
+  }
+}
+setRange('standard');
 
 /* ---------- state ---------- */
 const state = {
@@ -540,6 +600,7 @@ SAMPLES.forEach((s, k) => {
   s.phase    = c.phase;
   s.scale    = c.scale;
   s.fluor    = c.fluor;
+  s.elastic  = c.elastic;
   s.thin     = true;          // the capillary wall sits in the confocal volume
 });
 
@@ -610,9 +671,10 @@ function trueSpectrum(){
   const dose = (state.power / 100) * beamT() * state.tint *
                CONFIG.peakCountsRef * state.gain * o.signal;
   const ws = regionWeights();
-  let top = null, topw = 0;
+  let top = null, topw = 0, elastic = ws.glass;
 
   for (const {s, w} of ws){
+    elastic += w * s.elastic;
     const f = focusFactor(s);
     const prof = PROFILE[s.spectrum];
     const a = dose * w * f * s.scale;
@@ -636,8 +698,12 @@ function trueSpectrum(){
       out[i] += dose * ws.glass * (0.16 * gp[i] + 0.20 * FLUOR[i]);
   }
 
+  // Filter before the lamp is added: white light is not at the laser line, so
+  // the notch passes it.
+  for (let i = 0; i < n; i++) out[i] = (out[i] * NOTCH[i] + dose * elastic * WING[i]) * DISP;
+
   const dark = CONFIG.darkRate * state.tint;
-  const lamp = state.illum ? CONFIG.illuminatorLeak * state.tint : 0;
+  const lamp = state.illum ? CONFIG.illuminatorLeak * state.tint * DISP : 0;
   for (let i = 0; i < n; i++) out[i] += dark + lamp * (0.7 + 0.3 * FLUOR[i]);
 
   return {counts: out, dominant: top, weight: topw};
@@ -706,8 +772,11 @@ function estimateSNR(avg){
       if (sm[j] < mn) mn = sm[j];
     floor[i] = mn;
   }
+  // the laser wing past a notch is not Raman signal
+  const rg = CONFIG.ranges[RANGE], from = rg.wing ? rg.cutOn + 25 : -Infinity;
   let peak = 0, peakWn = 0;
   for (let i = 0; i < n; i++){
+    if (WN[i] < from) continue;
     const h = sm[i] - floor[i];
     if (h > peak){ peak = h; peakWn = WN[i]; }
   }
@@ -1337,7 +1406,8 @@ function drawPlot(){
   pctx.fillStyle = '#7d887f';
   pctx.font = '15px SFMono-Regular, ui-monospace, Consolas, monospace';
   pctx.textAlign = 'center';
-  for (let wn = 400; wn <= CONFIG.wnMax; wn += 400){
+  const tick = CONFIG.ranges[RANGE].tick;
+  for (let wn = Math.ceil(CONFIG.wnMin / tick) * tick; wn <= CONFIG.wnMax; wn += tick){
     const x = X(wn);
     pctx.beginPath(); pctx.moveTo(x, M.t); pctx.lineTo(x, PH - M.b); pctx.stroke();
     pctx.fillText(String(wn), x, PH - M.b + 22);
@@ -1539,7 +1609,7 @@ async function acquire(){
   const s = underBeam();
   state.meta = {name: operatorName(), scan: state.scanIndex,
                 x: state.x, y: state.y, z: state.z, obj: o.name, NA: o.NA,
-                power: state.power, tint: t, accum: N,
+                power: state.power, tint: t, accum: N, range: RANGE,
                 beam: state.beam, illum: state.illum,
                 started: new Date().toISOString()};
 
@@ -1636,6 +1706,8 @@ function buildCSV(){
     '# name,' + m.name, '# scan,' + m.scan, '# started,' + m.started,
     '# stage_x_mm,' + m.x, '# stage_y_mm,' + m.y, '# focus_um,' + m.z,
     '# objective,' + m.obj, '# NA,' + m.NA,
+    '# spectral_range,' + m.range,
+    '# laser_filter,' + CONFIG.ranges[m.range].filter,
     '# laser_power_pct,' + m.power, '# integration_s,' + m.tint,
     '# accumulations,' + state.count,
     '# total_exposure_s,' + (state.count * m.tint).toFixed(2),
@@ -1735,6 +1807,27 @@ bindRange('power', 'powerOut', v => v + ' %', 'power');
 bindRange('tint',  'tintOut',  v => v.toFixed(1) + ' s', 'tint');
 bindRange('accum', 'accumOut', v => String(v), 'accum');
 ['tint', 'accum'].forEach(id => $(id).addEventListener('input', updateEstimate));
+
+/* The plotted spectrum belongs to the old axis, so it goes; finished scans are
+   already saved in the session list.                                        */
+$('range').onchange = () => {
+  const el = $('range');
+  if (state.running){
+    el.value = RANGE;
+    log('Finish or stop the acquisition before changing the spectral range.', 'w');
+    return;
+  }
+  setRange(el.value);
+  state.sum = null; state.count = 0; state.last = null;
+  $('csvBtn').disabled = true; $('csvTextBtn').disabled = true;
+  $('legN').textContent = '0'; $('snrOut').textContent = 'S/N —';
+  $('maxOut').textContent = 'peak — counts'; $('plotHint').textContent = 'no data';
+  drawPlot();
+  log(RANGE === 'low'
+    ? 'Notch filters in, grating turned for high dispersion. Range now 10\u2013610 cm\u207b\u00b9; ' +
+      'the fingerprint and C-H regions are out of reach.'
+    : 'Edge filter in. Range now 150\u20133200 cm\u207b\u00b9; nothing below 150 reaches the detector.');
+};
 
 $('student').onchange = () => {
   refreshGain(); state.scanIndex = 0;

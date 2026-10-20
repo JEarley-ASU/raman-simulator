@@ -56,10 +56,18 @@ goes in tube *k*.
 
 Things students can get out of it:
 
-- **Polymorphs.** α and β glycine differ by ~4 cm⁻¹ at the CCN stretch (893 vs
-  889), which this spectrometer cannot resolve. They separate on the lattice
-  modes instead: α at 198, β at 215, γ at 251 cm⁻¹. The detector reaches down to
-  150 cm⁻¹ so those are in range.
+- **Polymorphs.** Glycine bands follow Table II of Surovtsev et al., *J. Chem.
+  Phys.* **137**, 065103 (2012), shifted from 78 K to room temperature using the
+  anharmonic fits in Surovtsev et al., *J. Chem. Phys.* **134**, 045102 (2011).
+  The C–C stretch sits at ~893 cm⁻¹ in all three forms, so it cannot tell them
+  apart. In the standard window (150–3200 cm⁻¹, edge filter) the CO₂ bend
+  (698 / 706 / 687), C–N stretch (1034 / 1042 / 1050) and CH₂ stretch
+  (2972 / 2951 / 2962) do. The clearest fingerprint is the lattice modes, which
+  need the **Spectral range** control switched to the notch filters
+  (10–610 cm⁻¹). Strongest lattice bands: α 53, 72, 111 cm⁻¹; β 84, 108,
+  144, 156; γ 91, 105, 143, 153. The low window costs light per pixel (about
+  5× longer exposures) and shows a laser wing below ~30 cm⁻¹, as on a real
+  instrument.
 - **Isotope shift.** The C–H stretch at 3019 cm⁻¹ moves to 2256 on deuteration,
   a ratio of 1.338 against the harmonic prediction √(μ_D/μ_H) = 1.363. The gap
   is anharmonicity. CDCl₃ also carries a small residual 3019 band at ~99.8 atom % D.

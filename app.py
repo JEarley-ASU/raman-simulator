@@ -32,7 +32,7 @@ from labdata import (SHAPES, ParseError, als_baseline, despike, fit_bands,
                      smooth)
 
 HERE = Path(__file__).parent
-WN_MIN, WN_MAX = 150, 3200
+WN_MIN, WN_MAX = 0, 3200   # spans both instrument windows
 
 st.set_page_config(page_title="Raman microspectrometer",
                    page_icon="🔬", layout="wide")
