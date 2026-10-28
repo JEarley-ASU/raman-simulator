@@ -122,7 +122,9 @@
             margin-right:6px;text-decoration:none}
   .params{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:13px;
     margin-top:14px;padding-top:14px;border-top:1px solid var(--rule)}
-  .params .f{display:grid;gap:5px}
+  .params .f{display:grid;gap:5px;min-width:0}
+  .params .f.wide{grid-column:span 2}
+  .params select{width:100%;min-width:0}
   .params .f > span,.params .f > label{font-size:12px;color:var(--ink-dim)}
   .params .f b{font-family:var(--mono);font-weight:500}
   .acq-bar{margin-top:14px;height:5px;background:var(--panel-2);border-radius:3px;overflow:hidden}
@@ -281,7 +283,7 @@
       <div class="f"><span>Accumulations</span>
         <input type="range" id="accum" min="1" max="64" step="1" value="4">
         <b id="accumOut">4</b></div>
-      <div class="f"><label for="range">Spectral range</label>
+      <div class="f wide"><label for="range">Spectral range</label>
         <select id="range">
           <option value="standard" selected>150–3200 cm⁻¹ · edge filter</option>
           <option value="low">10–610 cm⁻¹ · notch filters</option>
