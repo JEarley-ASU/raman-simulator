@@ -814,10 +814,10 @@ function trueSpectrum(){
   return {counts: out, dominant: top, weight: topw};
 }
 
-function acquireOnce(k){
+function acquireOnce(){
   const {counts} = trueSpectrum();
   const n = CONFIG.nPixels;
-  const rng = mulberry32(hashStr(studentSeed() + '|' + state.scanIndex + '|' + k));
+  const rng = mulberry32((Math.random() * 4294967296) >>> 0);
   const drift = 1 + 0.022 * gaussPair(rng);
   const y = new Float64Array(n);
   let saturated = false;
@@ -1750,7 +1750,7 @@ async function acquire(){
       (k + 1) + ' of ' + N;
     await sleep(160);            // detector readout between accumulations
 
-    const r = acquireOnce(k);
+    const r = acquireOnce();
     state.last = r.y;
     for (let i = 0; i < CONFIG.nPixels; i++) state.sum[i] += r.y[i];
     state.count++;

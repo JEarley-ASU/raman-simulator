@@ -30,10 +30,12 @@ should save CSVs (or the zip) before leaving.
 
 ## Names
 
-The first name seeds detector gain, noise and focus offsets, so the same name
-reproduces the same session and different names get different data. It is
-case-insensitive. Two students with the same first name get identical data;
-have one add an initial. Nothing is stored on the server. Nothing the students
+The first name seeds detector gain and focus offsets, so the same name gets
+the same instrument back and different names get different instruments. It is
+case-insensitive. Two students with the same first name share an instrument;
+have one add an initial. Photon noise and cosmic rays are freshly random on
+every accumulation, so no two acquisitions are identical, even for the same
+name. Nothing is stored on the server. Nothing the students
 see says the data are generated or that the name controls them; the help text
 only says the name labels their scans and files.
 
