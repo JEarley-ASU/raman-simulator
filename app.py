@@ -1,5 +1,5 @@
 """
-Raman microspectrometer teaching simulator — Streamlit wrapper.
+Raman microspectrometer — Streamlit wrapper.
 
 The instrument itself stays client-side. Canvas rendering, keyboard jogging and
 live focus feedback all need sub-100 ms response, and routing those through
@@ -27,12 +27,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
-from labdata import (SHAPES, ParseError, als_baseline, despike, fit_bands,
+from labdata import (ANALYZER_TAGS, SHAPES, ParseError, als_baseline, despike, fit_bands,
                      integrate, normalise, parse_csv, pick_peaks, poly_baseline,
                      smooth)
 
 HERE = Path(__file__).parent
-WN_MIN, WN_MAX = 0, 3200   # spans both instrument windows
+WN_MIN, WN_MAX = -300, 3200   # spans every instrument window, anti-Stokes included
 
 st.set_page_config(page_title="Raman microspectrometer",
                    page_icon="🔬", layout="wide")
@@ -53,8 +53,7 @@ with st.sidebar:
     st.subheader("Session")
     name = st.text_input(
         "First name", placeholder="e.g. Maya",
-        help="Seeds the detector gain, noise and focus offsets. Use the same "
-                 "name each time to get the same instrument back.").strip()
+        help="Labels your scans and saved files.").strip()
     st.divider()
     st.caption(
         "Scans you collect appear in the Analysis tab. They last until you "
@@ -130,6 +129,7 @@ def pick(spectra: dict) -> list:
         "Power %": [x.get("laser_power_pct") for x in m],
         "Time (s)": [x.get("integration_s") for x in m],
         "Acc.": [x.get("accumulations") for x in m],
+        "Analyzer": [ANALYZER_TAGS.get(x.get("analyzer"), "out") for x in m],
         "S/N": [x.get("estimated_SNR") for x in m],
         "X (mm)": [x.get("stage_x_mm") for x in m],
         "Y (mm)": [x.get("stage_y_mm") for x in m],

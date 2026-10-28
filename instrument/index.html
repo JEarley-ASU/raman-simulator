@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Raman Microspectrometer — Teaching Simulator</title>
+<title>Raman Microspectrometer</title>
 <!--
   One file, used two ways.
 
@@ -285,6 +285,13 @@
         <select id="range">
           <option value="standard" selected>150–3200 cm⁻¹ · edge filter</option>
           <option value="low">10–610 cm⁻¹ · notch filters</option>
+          <option value="antistokes">−300 to +300 cm⁻¹ · notch filters</option>
+        </select></div>
+      <div class="f"><label for="analyzer">Analyzer</label>
+        <select id="analyzer">
+          <option value="out" selected>Out</option>
+          <option value="V">Parallel (V)</option>
+          <option value="H">Perpendicular (H)</option>
         </select></div>
     </div>
 
@@ -300,11 +307,11 @@
     </div>
 
     <p class="note">
-      Every accumulation comes from a seeded generator, so a name reproduces its run exactly,
-      while each new acquisition on the same spot gets fresh noise. Leave the white light on and it
-      will swamp the detector, as it does on the bench. The edge filter stops everything below
-      150 cm⁻¹; to reach lattice modes, swap in the notch filters, which cover only a narrow
-      window and let a wing of laser light through near their edge.
+      Leave the white light on and it will swamp the detector. The edge filter stops everything
+      below 150 cm⁻¹ and all anti-Stokes light; to reach lattice modes or the anti-Stokes side,
+      swap in the notch filters, which cover only a narrow window and let a wing of laser light
+      through near the laser line. The laser is vertically polarized; the analyzer passes only
+      the scattered light polarized parallel (V) or perpendicular (H) to it.
     </p>
   </section>
 
@@ -372,14 +379,18 @@ const CONFIG = {
      turning the grating to higher dispersion reaches the lattice modes, over a
      window too narrow to hold anything else. snrWindow is a stretch clear of
      every species in that window. cutOn and edgeW set where the filter
-     reaches half transmission and how steeply; only the notch lets a wing of
-     laser light through.                                                     */
+     reaches half transmission and how steeply, measured from the laser line on
+     either side; only the notch lets a wing of laser light through. Negative
+     shifts are anti-Stokes, which only a notch can pass.                     */
   ranges: {
-    standard: {wnMin: 150, wnMax: 3200, filter: 'edge', cutOn: 152, edgeW: 4, wing: 0,
-               tick: 400, snrWindow: [1750, 2120], label: '150\u20133200 cm\u207b\u00b9, edge filter'},
-    low:      {wnMin: 10,  wnMax: 610,  filter: 'notch', cutOn: 14, edgeW: 2.5, wing: 1,
-               tick: 100, snrWindow: [395, 465],   label: '10\u2013610 cm\u207b\u00b9, notch filters'},
+    standard:   {wnMin: 150,  wnMax: 3200, filter: 'edge', cutOn: 152, edgeW: 4, wing: 0,
+                 tick: 400, snrWindow: [1750, 2120], label: '150\u20133200 cm\u207b\u00b9, edge filter'},
+    low:        {wnMin: 10,   wnMax: 610,  filter: 'notch', cutOn: 14, edgeW: 2.5, wing: 1,
+                 tick: 100, snrWindow: [395, 465],   label: '10\u2013610 cm\u207b\u00b9, notch filters'},
+    antistokes: {wnMin: -300, wnMax: 300,  filter: 'notch', cutOn: 14, edgeW: 2.5, wing: 1,
+                 tick: 100, snrWindow: [192, 238],   label: '\u2212300 to +300 cm\u207b\u00b9, notch filters'},
   },
+  sampleK: 296,              // sets the anti-Stokes Boltzmann factor
   readNoise: 12, darkRate: 3, fullWell: 65535,
   peakCountsRef: 7000,       // strongest band, 100% power, 1 s, in focus, at refNA
   cosmicPerSecond: 0.025,
@@ -404,14 +415,17 @@ const SAMPLES = [
    instrument, which labels tubes by number only.                             */
 /* elastic: Rayleigh scattering relative to the strongest Raman band. A powder
    scatters far more than a clear liquid, so its laser wing reaches further
-   past the notch filters.                                                    */
+   past the notch filters. elasticRho: depolarization of that scattered light;
+   a clear liquid keeps the laser's polarization, multiple scattering in a
+   powder scrambles much of it.                                               */
 const CONTENTS = [
-  {key: "alpha_glycine", name: "\u03b1-glycine", phase: "powder", scale: 0.52, fluor: 0.18, elastic: 2.5},
-  {key: "beta_glycine",  name: "\u03b2-glycine", phase: "powder", scale: 0.46, fluor: 0.22, elastic: 2.5},
-  {key: "gamma_glycine", name: "\u03b3-glycine", phase: "powder", scale: 0.50, fluor: 0.16, elastic: 2.5},
-  {key: "chcl3",         name: "CHCl\u2083",     phase: "liquid", scale: 0.95, fluor: 0.05, elastic: 0.4},
-  {key: "cdcl3",         name: "CDCl\u2083",     phase: "liquid", scale: 0.92, fluor: 0.05, elastic: 0.4},
+  {key: "alpha_glycine", name: "\u03b1-glycine", phase: "powder", scale: 0.52, fluor: 0.18, elastic: 2.5, elasticRho: 0.5},
+  {key: "beta_glycine",  name: "\u03b2-glycine", phase: "powder", scale: 0.46, fluor: 0.22, elastic: 2.5, elasticRho: 0.5},
+  {key: "gamma_glycine", name: "\u03b3-glycine", phase: "powder", scale: 0.50, fluor: 0.16, elastic: 2.5, elasticRho: 0.5},
+  {key: "chcl3",         name: "CHCl\u2083",     phase: "liquid", scale: 0.95, fluor: 0.05, elastic: 0.4, elasticRho: 0.02},
+  {key: "cdcl3",         name: "CDCl\u2083",     phase: "liquid", scale: 0.92, fluor: 0.05, elastic: 0.4, elasticRho: 0.02},
 ];
+const GLASS_ELASTIC_RHO = 0.03;
 
 /* ---- Spectral library ----
    Band positions follow the published Raman spectra. Replace a peak list with
@@ -453,19 +467,39 @@ const SPECTRA = {
 
   // Chloroform: strong C-Cl symmetric stretch, and a C-H stretch at 3019 that
   // moves to 2256 on deuteration. The band at 0 is the liquid's reorientational
-  // wing, which only the low-wavenumber window sees.
+  // wing, which only the notch windows see. The fourth entry is the C3v
+  // symmetry: E bands are depolarized, A1 ratios come from A1_RHO below, and
+  // the reorientational wing is purely anisotropic scattering.
   chcl3: {peaks: [
-    [0,.30,30],
-    [262,.80,8],[366,.45,9],[667,1.0,7],[761,.35,9],[1216,.30,10],[3019,.70,16]]},
+    [0,.30,30,'aniso'],
+    [262,.80,8,'E'],[366,.45,9,'A1'],[667,1.0,7,'A1'],[761,.35,9,'E'],
+    [1216,.30,10,'E'],[3019,.70,16,'A1']]},
   cdcl3: {peaks: [
-    [0,.30,30],
-    [262,.78,8],[366,.44,9],[651,1.0,7],[737,.33,9],[908,.28,9],[1210,.18,10],
-    [2256,.68,14],
-    [3019,.05,16]]},   // residual protonated chloroform, ~99.8 atom % D
+    [0,.30,30,'aniso'],
+    [262,.78,8,'E'],[366,.44,9,'A1'],[651,1.0,7,'A1'],[737,.33,9,'E'],[908,.28,9,'E'],
+    [1210,.18,10,'E'],[2256,.68,14,'A1'],
+    [3019,.05,16,'A1']]},   // residual protonated chloroform, ~99.8 atom % D
 
-  // The broad band near 60 is the boson peak every glass shows.
-  glass: {peaks: [[60,.50,40],[555,.55,90],[1090,.40,110],[1550,.18,120]]},
+  // The broad band near 60 is the boson peak every glass shows. Fourth entry:
+  // depolarization ratio.
+  glass: {peaks: [[60,.50,40,.35],[555,.55,90,.15],[1090,.40,110,.5],[1550,.18,120,.4]]},
 };
+
+/* ==================================================================
+   DEPOLARIZATION RATIOS OF THE A1 LIQUID BANDS   (edit here)
+   rho = I_perp / I_par with a vertically polarized laser. Totally symmetric
+   (A1) bands are polarized, rho < 0.75. Keys are the band centres listed in
+   SPECTRA above; E bands are fixed at 0.75 by symmetry and are not listed.
+   ================================================================== */
+const A1_RHO = {
+  chcl3: {366: 0.12, 667: 0.08, 3019: 0.20},
+  cdcl3: {366: 0.12, 651: 0.08, 2256: 0.18, 3019: 0.20},
+};
+const DEPOLARIZED = 0.75;
+/* Powder grains are single crystals in random orientation, so a band's ratio
+   is set by whichever grain the beam is on and means nothing for symmetry.  */
+const GRAIN_UM = 4;            // grain scale: the ratios change beyond this
+const POWDER_RHO = [0.05, 4];  // log-uniform range for a single grain
 
 /* ================================================================== */
 const $ = id => document.getElementById(id);
@@ -529,7 +563,28 @@ for (const key in SPECTRA){
 /* DISP: light per pixel relative to the standard window. Higher dispersion
    spreads the same photons over more pixels, so the low window needs longer
    exposures for the same counts.                                            */
-let WN, PROFILE, FLUOR, NOTCH, WING, RANGE, DISP;
+/* Anti-Stokes band at shift -nu relative to its Stokes partner at +nu: the
+   nu^4 scattering factor times the Boltzmann population of v = 1.           */
+function antiStokesFactor(nu){
+  const nu0 = 1e7 / CONFIG.laserNm, c2 = 1.438777;   // c2 = hc/k in cm K
+  return Math.pow((nu0 + nu) / (nu0 - nu), 4) * Math.exp(-c2 * nu / CONFIG.sampleK);
+}
+
+function bandRho(key, band){
+  const sym = band[3];
+  if (typeof sym === 'number') return sym;
+  if (sym === 'E' || sym === 'aniso') return DEPOLARIZED;
+  if (sym === 'A1'){
+    const v = A1_RHO[key] && A1_RHO[key][band[0]];
+    if (v == null) throw new Error('A1_RHO has no entry for ' + key + ' ' + band[0]);
+    return v;
+  }
+  return null;   // powder: set by the grain under the beam
+}
+
+/* PROFILE: whole spectrum per material. BANDS: the same, split per band with
+   its depolarization ratio, for use when the analyzer is in.               */
+let WN, PROFILE, BANDS, FLUOR, NOTCH, WING, RANGE, DISP;
 function setRange(id){
   const r = CONFIG.ranges[id], n = CONFIG.nPixels, s0 = CONFIG.ranges.standard;
   RANGE = id;
@@ -537,20 +592,35 @@ function setRange(id){
   CONFIG.wnMin = r.wnMin; CONFIG.wnMax = r.wnMax; CONFIG.snrWindow = r.snrWindow;
   WN = new Float64Array(n);
   for (let i = 0; i < n; i++) WN[i] = r.wnMin + (r.wnMax - r.wnMin) * i / (n - 1);
-  PROFILE = {};
+  const asf = new Float64Array(n);
+  for (let i = 0; i < n; i++) asf[i] = WN[i] < 0 ? antiStokesFactor(-WN[i]) : 1;
+  PROFILE = {}; BANDS = {};
   for (const key in SPECTRA){
-    const y = new Float64Array(n);
-    for (let i = 0; i < n; i++) y[i] = libraryAt(SPECTRA[key], WN[i]) / LIB_NORM[key];
+    const lib = SPECTRA[key], y = new Float64Array(n);
+    for (let i = 0; i < n; i++) y[i] = libraryAt(lib, Math.abs(WN[i])) * asf[i] / LIB_NORM[key];
     PROFILE[key] = y;
+    if (lib.data){ BANDS[key] = [{prof: y, rho: lib.rho ?? DEPOLARIZED}]; continue; }
+    BANDS[key] = lib.peaks.map(p => {
+      const b = new Float64Array(n), [pos, amp, w] = p;
+      for (let i = 0; i < n; i++){
+        const d = (Math.abs(WN[i]) - pos) / w;
+        b[i] = amp / (1 + d * d) * asf[i] / LIB_NORM[key];
+      }
+      return {prof: b, rho: bandRho(key, p)};
+    });
   }
   FLUOR = new Float64Array(n);
   NOTCH = new Float64Array(n);   // filter transmission
   WING  = new Float64Array(n);   // laser light leaking past the notch edge
   for (let i = 0; i < n; i++){
     const x = WN[i];
-    FLUOR[i] = 0.55 * Math.exp(-(x - 300) / 1400) + 0.75 * Math.exp(-Math.pow((x - 1500) / 900, 2));
-    NOTCH[i] = 1 / (1 + Math.exp(-(x - r.cutOn) / r.edgeW));
-    WING[i]  = r.wing * NOTCH[i] * Math.exp(-(x - r.cutOn) / 4);
+    // fluorescence is always red-shifted from the laser
+    FLUOR[i] = x < 0 ? 0 :
+      0.55 * Math.exp(-(x - 300) / 1400) + 0.75 * Math.exp(-Math.pow((x - 1500) / 900, 2));
+    // an edge filter blocks everything bluer than its edge; a notch is symmetric
+    const d = r.filter === 'edge' ? x : Math.abs(x);
+    NOTCH[i] = 1 / (1 + Math.exp(-(d - r.cutOn) / r.edgeW));
+    WING[i]  = r.wing * NOTCH[i] * Math.exp(-(d - r.cutOn) / 4);
   }
 }
 setRange('standard');
@@ -559,7 +629,7 @@ setRange('standard');
 const state = {
   x: CONFIG.start.x, y: CONFIG.start.y, z: 0,
   obj: CONFIG.startObjective,
-  beam: 'off', illum: true,
+  beam: 'off', illum: true, analyzer: 'out',
   power: 12, tint: 1, accum: 4,
   running: false, abort: false, focusing: false,
   scanIndex: 0, sum: null, count: 0, last: null, meta: null, scans: [],
@@ -601,6 +671,7 @@ SAMPLES.forEach((s, k) => {
   s.scale    = c.scale;
   s.fluor    = c.fluor;
   s.elastic  = c.elastic;
+  s.elasticRho = c.elasticRho;
   s.thin     = true;          // the capillary wall sits in the confocal volume
 });
 
@@ -665,20 +736,54 @@ function beamT(){
   return state.beam === 'excite' ? 1 : state.beam === 'align' ? CONFIG.alignND : 0;
 }
 
+/* Fraction of light with depolarization ratio rho that the analyzer passes,
+   for a vertically polarized laser.                                         */
+const ANALYZER = {
+  out: {key: 'out',             text: 'out'},
+  V:   {key: 'parallel_V',      text: 'parallel (V)'},
+  H:   {key: 'perpendicular_H', text: 'perpendicular (H)'},
+};
+
+function analyzerPass(rho){
+  const a = state.analyzer;
+  return a === 'out' ? 1 : a === 'V' ? 1 / (1 + rho) : rho / (1 + rho);
+}
+
+/* A powder band's ratio is fixed by the grain under the beam: the same spot
+   always gives the same value, a move to another grain gives a new one.     */
+function powderRho(s, j){
+  const gx = Math.floor(state.x * 1000 / GRAIN_UM), gy = Math.floor(state.y * 1000 / GRAIN_UM);
+  const u = mulberry32(hashStr(s.label + '|grain|' + gx + ':' + gy + '|' + j))();
+  const [lo, hi] = POWDER_RHO;
+  return lo * Math.pow(hi / lo, u);
+}
+
+function ramanProfile(key, s){
+  if (state.analyzer === 'out') return PROFILE[key];
+  const n = CONFIG.nPixels, y = new Float64Array(n);
+  BANDS[key].forEach((b, j) => {
+    const t = analyzerPass(b.rho ?? powderRho(s, j));
+    for (let i = 0; i < n; i++) y[i] += t * b.prof[i];
+  });
+  return y;
+}
+
 function trueSpectrum(){
   const n = CONFIG.nPixels, o = OBJ();
   const out = new Float64Array(n);
   const dose = (state.power / 100) * beamT() * state.tint *
                CONFIG.peakCountsRef * state.gain * o.signal;
   const ws = regionWeights();
-  let top = null, topw = 0, elastic = ws.glass;
+  const unpol = analyzerPass(1);   // fluorescence and white light
+  let top = null, topw = 0, elastic = ws.glass * analyzerPass(GLASS_ELASTIC_RHO);
+  const gp = ramanProfile('glass');
 
   for (const {s, w} of ws){
-    elastic += w * s.elastic;
+    elastic += w * s.elastic * analyzerPass(s.elasticRho);
     const f = focusFactor(s);
-    const prof = PROFILE[s.spectrum];
+    const prof = ramanProfile(s.spectrum, s);
     const a = dose * w * f * s.scale;
-    const fl = dose * w * s.fluor * 0.30;
+    const fl = dose * w * s.fluor * 0.30 * unpol;
     for (let i = 0; i < n; i++) out[i] += a * prof[i] + fl * FLUOR[i];
 
     // a thin film cannot stop a long confocal probe from reaching the slide
@@ -686,16 +791,14 @@ function trueSpectrum(){
       // collected substrate volume grows with the confocal depth response, so a
       // low-NA objective reads mostly slide and a high-NA one reads mostly film
       const leak = Math.min(3, o.dofUm / 12);
-      const gp = PROFILE.glass;
       for (let i = 0; i < n; i++) out[i] += dose * w * leak * 0.30 * gp[i];
     }
     if (w * s.scale > topw){ topw = w * s.scale; top = s; }
   }
 
   if (ws.glass > 0.01){
-    const gp = PROFILE.glass;
     for (let i = 0; i < n; i++)
-      out[i] += dose * ws.glass * (0.16 * gp[i] + 0.20 * FLUOR[i]);
+      out[i] += dose * ws.glass * (0.16 * gp[i] + 0.20 * unpol * FLUOR[i]);
   }
 
   // Filter before the lamp is added: white light is not at the laser line, so
@@ -703,7 +806,7 @@ function trueSpectrum(){
   for (let i = 0; i < n; i++) out[i] = (out[i] * NOTCH[i] + dose * elastic * WING[i]) * DISP;
 
   const dark = CONFIG.darkRate * state.tint;
-  const lamp = state.illum ? CONFIG.illuminatorLeak * state.tint * DISP : 0;
+  const lamp = state.illum ? CONFIG.illuminatorLeak * state.tint * DISP * unpol : 0;
   for (let i = 0; i < n; i++) out[i] += dark + lamp * (0.7 + 0.3 * FLUOR[i]);
 
   return {counts: out, dominant: top, weight: topw};
@@ -776,7 +879,7 @@ function estimateSNR(avg){
   const rg = CONFIG.ranges[RANGE], from = rg.wing ? rg.cutOn + 25 : -Infinity;
   let peak = 0, peakWn = 0;
   for (let i = 0; i < n; i++){
-    if (WN[i] < from) continue;
+    if (Math.abs(WN[i]) < from) continue;
     const h = sm[i] - floor[i];
     if (h > peak){ peak = h; peakWn = WN[i]; }
   }
@@ -1610,12 +1713,13 @@ async function acquire(){
   state.meta = {name: operatorName(), scan: state.scanIndex,
                 x: state.x, y: state.y, z: state.z, obj: o.name, NA: o.NA,
                 power: state.power, tint: t, accum: N, range: RANGE,
+                analyzer: ANALYZER[state.analyzer].key,
                 beam: state.beam, illum: state.illum,
                 started: new Date().toISOString()};
 
   log('Scan ' + state.scanIndex + ' started at (' + fmt(state.x,3) + ', ' +
       fmt(state.y,3) + ') mm, ' + o.name + ', ' + state.power + '%, ' +
-      fmt(t,1) + ' s \u00D7 ' + N + '.', 'em');
+      fmt(t,1) + ' s \u00D7 ' + N + ', analyzer ' + ANALYZER[state.analyzer].text + '.', 'em');
   if (state.beam === 'align')
     log('  Alignment attenuator is still in the path — the beam is ' +
         (1/CONFIG.alignND).toFixed(0) + '× down. Switch to Excite to measure.', 'w');
@@ -1702,12 +1806,14 @@ function buildCSV(){
   const m = state.meta;
   const est = estimateSNR(Array.from(state.sum, v => v / state.count));
   const L = [
-    '# Raman microspectrometer - simulated acquisition',
+    '# Raman microspectrometer export',
     '# name,' + m.name, '# scan,' + m.scan, '# started,' + m.started,
     '# stage_x_mm,' + m.x, '# stage_y_mm,' + m.y, '# focus_um,' + m.z,
     '# objective,' + m.obj, '# NA,' + m.NA,
     '# spectral_range,' + m.range,
     '# laser_filter,' + CONFIG.ranges[m.range].filter,
+    '# laser_polarization,vertical',
+    '# analyzer,' + m.analyzer,
     '# laser_power_pct,' + m.power, '# integration_s,' + m.tint,
     '# accumulations,' + state.count,
     '# total_exposure_s,' + (state.count * m.tint).toFixed(2),
@@ -1760,7 +1866,7 @@ $('sheetCopy').onclick = async () => {
 };
 
 $('logBtn').onclick = () => download(operatorName() + '_session.txt',
-  'Raman simulator session log\nOperator: ' + operatorName() + '\n' +
+  'Raman microspectrometer session log\nOperator: ' + operatorName() + '\n' +
   new Date().toString() + '\n\n' + state.logLines.join('\n'));
 
 /* ---------- wiring ---------- */
@@ -1826,12 +1932,30 @@ $('range').onchange = () => {
   log(RANGE === 'low'
     ? 'Notch filters in, grating turned for high dispersion. Range now 10\u2013610 cm\u207b\u00b9; ' +
       'the fingerprint and C-H regions are out of reach.'
-    : 'Edge filter in. Range now 150\u20133200 cm\u207b\u00b9; nothing below 150 reaches the detector.');
+    : RANGE === 'antistokes'
+    ? 'Notch filters in, grating turned for high dispersion and centred on the laser line. ' +
+      'Range now \u2212300 to +300 cm\u207b\u00b9; negative shifts are anti-Stokes.'
+    : 'Edge filter in. Range now 150\u20133200 cm\u207b\u00b9; nothing below 150 and no anti-Stokes ' +
+      'light reaches the detector.');
+};
+
+$('analyzer').onchange = () => {
+  const el = $('analyzer');
+  if (state.running){
+    el.value = state.analyzer;
+    log('Finish or stop the acquisition before moving the analyzer.', 'w');
+    return;
+  }
+  state.analyzer = el.value;
+  updateReadout();
+  log(state.analyzer === 'out'
+    ? 'Analyzer out of the collection path.'
+    : 'Analyzer in, ' + ANALYZER[state.analyzer].text + ' to the laser polarization.');
 };
 
 $('student').onchange = () => {
   refreshGain(); state.scanIndex = 0;
-  log('Operator set to ' + operatorName() + '. Detector gain and parfocality re-referenced.');
+  log('Operator set to ' + operatorName() + '.');
   redraw();
 };
 

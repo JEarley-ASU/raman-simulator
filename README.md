@@ -33,7 +33,9 @@ should save CSVs (or the zip) before leaving.
 The first name seeds detector gain, noise and focus offsets, so the same name
 reproduces the same session and different names get different data. It is
 case-insensitive. Two students with the same first name get identical data;
-have one add an initial. Nothing is stored on the server.
+have one add an initial. Nothing is stored on the server. Nothing the students
+see says the data are generated or that the name controls them; the help text
+only says the name labels their scans and files.
 
 ## The slide
 
@@ -71,6 +73,28 @@ Things students can get out of it:
 - **Isotope shift.** The C–H stretch at 3019 cm⁻¹ moves to 2256 on deuteration,
   a ratio of 1.338 against the harmonic prediction √(μ_D/μ_H) = 1.363. The gap
   is anharmonicity. CDCl₃ also carries a small residual 3019 band at ~99.8 atom % D.
+- **Depolarization ratios.** The laser is vertically polarized, and the
+  **Analyzer** control sets Out, Parallel (V) or Perpendicular (H). With the
+  analyzer out, spectra are exactly what they were before the analyzer was
+  added. In the liquids, E bands have ρ = I⊥/I∥ = 0.75. Polarized A1 bands use
+  the values in the `A1_RHO` block of `instrument/index.html`, which you can
+  edit: CHCl₃ 366 0.12, 667 0.08, 3019 0.20; CDCl₃ 366 0.12, 651 0.08,
+  2256 0.18, 3019 0.20. Peak-height ratios come out a little off these values
+  where bands overlap (an E band next to an A1 band reads about 0.74), so a
+  band fit is the better measurement. Fluorescence and white light are
+  unpolarized. In the powders each grain is a single crystal in a random
+  orientation, so a band's ratio changes when the stage moves more than about
+  4 µm (`GRAIN_UM`) and says nothing about symmetry. That is the lesson:
+  depolarization ratios assign symmetry only in an isotropic sample.
+- **Anti-Stokes.** The third **Spectral range** setting, −300 to +300 cm⁻¹, has
+  the same dispersion and light per pixel as the 10–610 window. The notch blocks
+  only within ~14 cm⁻¹ of the laser on both sides, and a laser wing leaks
+  through on each side. Each anti-Stokes band is its Stokes partner times
+  ((ν₀+ν)/(ν₀−ν))⁴·exp(−hcν/kT), with ν₀ = 1/532 nm and T = 296 K
+  (`CONFIG.sampleK`). There is no fluorescence on the anti-Stokes side. From the
+  262 cm⁻¹ CHCl₃ pair (ratio ≈ 0.31) students can recover the sample
+  temperature. The edge-filter window blocks everything below 150 cm⁻¹,
+  anti-Stokes included.
 
 ## Files
 

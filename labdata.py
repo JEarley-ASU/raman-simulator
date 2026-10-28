@@ -1,5 +1,5 @@
 """
-Reading and processing spectra exported by the Raman simulator.
+Reading and processing spectra exported by the Raman microspectrometer.
 
 Free of Streamlit imports, so the same functions work from a notebook:
 
@@ -31,6 +31,7 @@ NUMERIC_KEYS = {
     "total_exposure_s", "estimated_SNR",
 }
 BOOL_KEYS = {"illuminator_open"}
+ANALYZER_TAGS = {"parallel_V": "∥ V", "perpendicular_H": "⊥ H"}
 
 
 class ParseError(ValueError):
@@ -58,8 +59,14 @@ class Spectrum:
             parts = ["spectrum"]
         if m.get("objective"):
             parts.append(str(m["objective"]))
-        if m.get("spectral_range") == "low":
+        rng = m.get("spectral_range")
+        if rng == "low":
             parts.append("low wavenumber")
+        elif rng == "antistokes":
+            parts.append("anti-Stokes")
+        pol = ANALYZER_TAGS.get(m.get("analyzer"))
+        if pol:
+            parts.append(pol)
         return " · ".join(parts)
 
 
