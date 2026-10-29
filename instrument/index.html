@@ -492,10 +492,12 @@ const SPECTRA = {
    rho = I_perp / I_par with a vertically polarized laser. Totally symmetric
    (A1) bands are polarized, rho < 0.75. Keys are the band centres listed in
    SPECTRA above; E bands are fixed at 0.75 by symmetry and are not listed.
+   CHCl3 values are from the course spectrometer (parallel/perpendicular
+   pair, 2026); CDCl3 borrows them, C-D taking the C-H value.
    ================================================================== */
 const A1_RHO = {
-  chcl3: {366: 0.12, 667: 0.08, 3019: 0.20},
-  cdcl3: {366: 0.12, 651: 0.08, 2256: 0.18, 3019: 0.20},
+  chcl3: {366: 0.08, 667: 0.02, 3019: 0.13},
+  cdcl3: {366: 0.08, 651: 0.02, 2256: 0.13, 3019: 0.13},
 };
 const DEPOLARIZED = 0.75;
 /* Powder grains are single crystals in random orientation, so a band's ratio

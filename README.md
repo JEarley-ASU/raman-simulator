@@ -80,8 +80,12 @@ Things students can get out of it:
   analyzer out, spectra are exactly what they were before the analyzer was
   added. In the liquids, E bands have ρ = I⊥/I∥ = 0.75. Polarized A1 bands use
   the values in the `A1_RHO` block of `instrument/index.html`, which you can
-  edit: CHCl₃ 366 0.12, 667 0.08, 3019 0.20; CDCl₃ 366 0.12, 651 0.08,
-  2256 0.18, 3019 0.20. Peak-height ratios come out a little off these values
+  edit: CHCl₃ 366 0.08, 667 0.02, 3019 0.13, measured on the course
+  spectrometer. CDCl₃ uses the same values, with the C–D stretch (2256) given
+  the C–H value of 0.13, because the CDCl₃ pair taken on that instrument had
+  no perpendicular spectrum. On the real instrument E bands read about
+  0.78–0.83 rather than 0.75, because of small instrumental polarization
+  effects that the model leaves out. Peak-height ratios come out a little off these values
   where bands overlap (an E band next to an A1 band reads about 0.74), so a
   band fit is the better measurement. Fluorescence and white light are
   unpolarized. In the powders each grain is a single crystal in a random
