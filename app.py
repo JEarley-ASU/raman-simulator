@@ -52,7 +52,7 @@ def _parse(text: str | bytes, source: str):
 with st.sidebar:
     st.subheader("Session")
     name = st.text_input(
-        "First name", placeholder="e.g. Maya",
+        "First name", placeholder="e.g. Sparky",
         help="Labels your scans and saved files.").strip()
     st.divider()
     st.caption(
@@ -303,6 +303,25 @@ with tab_an:
                 st.caption("Tick at least one spectrum above to plot it.")
             st.plotly_chart(fig)
 
+            if chosen:
+                cols = []
+                for k, (x, y, pre, base) in done.items():
+                    lab, ix = spectra[k].label, np.round(x, 2)
+                    if preview:
+                        cols.append(pd.Series(pre, index=ix, name=f"{lab} (raw)"))
+                        if base is not None:
+                            cols.append(pd.Series(base, index=ix, name=f"{lab} (baseline)"))
+                    else:
+                        cols.append(pd.Series(y + offsets[k], index=ix, name=lab))
+                wide = pd.concat(cols, axis=1).sort_index()
+                wide.index.name = "wavenumber_cm-1"
+                st.download_button(
+                    "Download the plotted data (.csv)", wide.to_csv().encode(),
+                    "processed_spectra.csv", "text/csv",
+                    help="One column per spectrum, exactly as plotted: every "
+                         "processing step applied, plus the stacking offset "
+                         "if stacking is on.")
+
             if peak_tables:
                 rows = [t.assign(spectrum=spectra[k].label) for k, t in peak_tables.items()]
                 allpk = pd.concat(rows, ignore_index=True)[
@@ -313,7 +332,7 @@ with tab_an:
                                    "peaks.csv", "text/csv")
 
         if chosen:
-            t_fit, t_int, t_exp = st.tabs(["Band fitting", "Integration", "Export"])
+            t_fit, t_int = st.tabs(["Band fitting", "Integration"])
 
             with t_fit:
                 c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
@@ -379,19 +398,6 @@ with tab_an:
                 st.download_button("Download areas (.csv)",
                                    it.to_csv(index=False).encode(),
                                    "areas.csv", "text/csv")
-
-            with t_exp:
-                frames = [pd.Series(y, index=np.round(x, 2), name=spectra[k].label)
-                          for k, (x, y, _, _) in done.items()]
-                wide = pd.concat(frames, axis=1).sort_index()
-                wide.index.name = "wavenumber_cm-1"
-                st.download_button("Processed spectra, as plotted (.csv)",
-                                   wide.to_csv().encode(), "processed_spectra.csv",
-                                   "text/csv")
-                st.caption("One column per ticked spectrum, after every "
-                           "processing step above. Stacking offsets are not "
-                           "included.")
-
         if scans:
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
