@@ -63,10 +63,39 @@ with st.sidebar:
 st.title("Raman microspectrometer")
 tab_run, tab_an = st.tabs(["Instrument", "Analysis"])
 
+# Scans live in session state so the instrument only has to send the latest
+# one. Sending the whole growing list through the component used to force a
+# heavy rerun and often remounted the iframe, which froze or reset the stage.
+if st.session_state.get("scan_owner") != name:
+    st.session_state.session_scans = []
+    st.session_state.session_scan_ids = set()
+    st.session_state.scan_owner = name
+
+
+def _ingest(latest) -> None:
+    """Accept one new scan, or a full list from an older instrument build."""
+    ids = set(st.session_state.session_scan_ids)
+    bag = list(st.session_state.session_scans)
+    incoming = latest if isinstance(latest, list) else [latest]
+    added = False
+    for item in incoming:
+        if not isinstance(item, dict):
+            continue
+        sid = item.get("started") or item.get("name")
+        if not sid or sid in ids:
+            continue
+        bag.append(item)
+        ids.add(sid)
+        added = True
+    if added:
+        st.session_state.session_scan_ids = ids
+        st.session_state.session_scans = bag
+
+
 # --------------------------------------------------------------------------
 # Instrument
 # --------------------------------------------------------------------------
-scans = []
+scans = st.session_state.session_scans
 with tab_run:
     if not name:
         st.info("Enter your first name in the sidebar to load the instrument.",
@@ -77,13 +106,19 @@ with tab_run:
             "a tube at 5×, switch up to measure, frame and focus on the "
             "alignment beam, then acquire."
         )
-        scans = _instrument(name=name, key="instrument", default=[]) or []
+        # A fixed height stops Streamlit from recreating the iframe every time
+        # the instrument reports a slightly different scroll height.
+        latest = _instrument(name=name, key="instrument", default=None,
+                             height=1180)
+        if latest:
+            _ingest(latest)
+            scans = st.session_state.session_scans
 
 
 # --------------------------------------------------------------------------
 # Analysis
 # --------------------------------------------------------------------------
-def collect(uploads) -> dict:
+def collect(uploads, scans) -> dict:
     """Every spectrum available this run, keyed by a stable id."""
     out, bad = {}, []
     for s in scans:
@@ -235,12 +270,15 @@ def ylabel(o: dict) -> str:
     return "Normalised intensity" if o["norm"] else "Intensity (counts)"
 
 
-with tab_an:
+@st.fragment
+def _analysis():
+    """Keep Analysis widgets from rerunning the instrument iframe."""
+    scans = st.session_state.get("session_scans", [])
     st.write("Tick the spectra to overlay. Scans from this session appear "
              "automatically; upload saved CSVs to bring back earlier work.")
     uploads = st.file_uploader("Saved spectra (.csv)", type=["csv", "txt"],
                                accept_multiple_files=True)
-    spectra = collect(uploads)
+    spectra = collect(uploads, scans)
 
     if not spectra:
         st.caption("No spectra yet. Acquire one on the Instrument tab or upload "
@@ -406,3 +444,7 @@ with tab_an:
             st.download_button(
                 f"Download all {len(scans)} raw scans from this session (.zip)",
                 buf.getvalue(), f"{name or 'raman'}_scans.zip", "application/zip")
+
+
+with tab_an:
+    _analysis()

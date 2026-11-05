@@ -332,6 +332,8 @@
 </div>
 
 <script>
+const HOSTED = window.parent !== window;
+
 /* ---- Crystal sprites ----
    Real particles cut out of powder micrographs by make_sprites.py and
    stored as grayscale+alpha PNGs. Procedural fragments always read as
@@ -693,7 +695,7 @@ refreshGain();   // now that SAMPLES carry geometry, fill in the contents too
 function eachCell(cellMm, x0, x1, y0, y1, seedBase, cb){
   const i0 = Math.floor(x0/cellMm), i1 = Math.ceil(x1/cellMm);
   const j0 = Math.floor(y0/cellMm), j1 = Math.ceil(y1/cellMm);
-  if ((i1-i0) * (j1-j0) > 24000) return;      // too zoomed out to be worth drawing
+  if ((i1-i0) * (j1-j0) > (HOSTED ? 8000 : 24000)) return;      // too zoomed out to be worth drawing
   for (let i = i0; i <= i1; i++)
     for (let j = j0; j <= j1; j++){
       const rng = mulberry32(hashStr(seedBase + ':' + i + ':' + j));
@@ -1411,6 +1413,12 @@ function drawVideo(){
   if (blackout){
     vctx.fillStyle = '#000';            // no image to aberrate
     vctx.fillRect(0, 0, VW, VH);
+  } else if (HOSTED){
+    // The per-pixel lens remap walks every pixel of a 960×686 canvas and
+    // freezes the Streamlit iframe. Field curvature is cheap and enough
+    // to keep the edge soft.
+    applyFieldCurvature();
+    vctx.drawImage(sceneCv, 0, 0);
   } else {
     applyEdgeSmear();
     applyFieldCurvature();
@@ -1607,11 +1615,19 @@ function updateEstimate(){
     state.tint.toFixed(1) + ' s \u2248 ' + span + ' at the instrument.';
 }
 
-let framePending = false;
+let framePending = false, readoutAt = 0;
 function redraw(){
   if (framePending) return;
   framePending = true;
-  requestAnimationFrame(() => { framePending = false; drawVideo(); updateReadout(); });
+  requestAnimationFrame(() => {
+    framePending = false;
+    drawVideo();
+    // trueSpectrum is too expensive to recompute on every jog inside the iframe
+    if (!HOSTED || performance.now() - readoutAt > 120){
+      readoutAt = performance.now();
+      updateReadout();
+    }
+  });
 }
 
 function setBeam(mode){
@@ -1837,14 +1853,15 @@ function buildCSV(){
    Speaks the Streamlit component protocol directly, so no build step or
    library is needed. Standalone, window.parent is this window and none of
    this runs.                                                                 */
-const HOSTED = window.parent !== window;
 function toHost(type, extra){
   if (HOSTED) window.parent.postMessage(
     Object.assign({isStreamlitMessage: true, type: type}, extra), '*');
 }
-// The whole list goes every time: the app keeps only the latest value.
+// Only the newest scan goes up. The app keeps the rest in session state, so
+// a long session does not push a growing megabyte through the iframe.
 function publishScans(){
-  toHost('streamlit:setComponentValue', {value: state.scans, dataType: 'json'});
+  const last = state.scans[state.scans.length - 1];
+  if (last) toHost('streamlit:setComponentValue', {value: last, dataType: 'json'});
 }
 
 $('csvBtn').onclick = () => {
@@ -1986,21 +2003,24 @@ updateEstimate();
 if (HOSTED){
   $('student').readOnly = true;
   document.documentElement.classList.add('hosted');
-  let lastH = 0;
+  let lastH = 0, heightTimer = 0;
   const fit = () => {
     const h = Math.ceil(document.documentElement.scrollHeight);
-    if (h !== lastH){ lastH = h; toHost('streamlit:setFrameHeight', {height: h}); }
+    if (h <= lastH) return;          // grow only; shrinking bounces the iframe
+    lastH = h;
+    toHost('streamlit:setFrameHeight', {height: h});
   };
-  new ResizeObserver(fit).observe(document.body);
+  new ResizeObserver(() => {
+    clearTimeout(heightTimer);
+    heightTimer = setTimeout(fit, 80);
+  }).observe(document.body);
   window.addEventListener('message', e => {
     const d = e.data;
     if (!d || d.type !== 'streamlit:render') return;
     const a = d.args || {};
-    lastH = 0; fit();
     if (a.name && a.name !== $('student').value){
       $('student').value = a.name;
       refreshGain(); state.scanIndex = 0; state.scans = [];
-      publishScans();
       log('Operator set to ' + operatorName() + '.');
       redraw();
     }

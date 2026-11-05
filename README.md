@@ -11,6 +11,12 @@
 3. Deploy, then give students the URL. Each enters their first name in the
    sidebar.
 
+The instrument runs in an iframe. Analysis sliders no longer reload it, and
+each finished scan sends only that one spectrum up, not the whole session.
+If the Cloud app still feels slow, it is usually the shared server, not the
+page: reopen the URL after it has been idle, or ask students to use
+**Save spectrum (.csv)** and work from uploads.
+
 ## What students see
 
 - **Instrument.** The simulated microspectrometer. Every finished scan is sent
