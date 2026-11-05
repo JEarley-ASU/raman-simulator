@@ -78,6 +78,13 @@ Things students can get out of it:
   144, 156; γ 91, 105, 143, 153. The low window costs light per pixel (about
   5× longer exposures) and shows a laser wing below ~30 cm⁻¹, as on a real
   instrument.
+- **Saturation.** The CCD well is 65 535 counts. At 50×, 100% laser and 1 s,
+  the strongest bands of both the liquids and the powders overfill it: the
+  core of each overfilled band sits on the rail, the plot draws a full-well
+  line, and the log and a badge say so. About 50% at the same settings stays
+  linear. Weaker objectives, the alignment beam, or an out-of-focus spot will
+  not reach the well. The live counts readout clips at the well and says
+  SATURATED before they acquire.
 - **Isotope shift.** The C–H stretch at 3019 cm⁻¹ moves to 2256 on deuteration,
   a ratio of 1.338 against the harmonic prediction √(μ_D/μ_H) = 1.363. The gap
   is anharmonicity. CDCl₃ also carries a small residual 3019 band at ~99.8 atom % D.

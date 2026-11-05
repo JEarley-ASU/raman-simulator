@@ -396,7 +396,9 @@ const CONFIG = {
   },
   sampleK: 296,              // sets the anti-Stokes Boltzmann factor
   readNoise: 12, darkRate: 3, fullWell: 65535,
-  peakCountsRef: 7000,       // strongest band, 100% power, 1 s, in focus, at refNA
+  peakCountsRef: 165000,     // strongest band, 100% power, 1 s, in focus, at refNA
+                             // 50× at 100% for 1 s overfills liquids and powders;
+                             // ~50% at the same settings stays under the well.
   cosmicPerSecond: 0.025,
   illuminatorLeak: 22000,    // counts/s of broadband light if the illuminator is left open
 };
@@ -818,21 +820,44 @@ function trueSpectrum(){
   return {counts: out, dominant: top, weight: topw};
 }
 
+/* Charge above the well spills sideways. Each overfilled island is flattened
+   to the rail with a 12-pixel bloom so a smashed band stays visible on the
+   standard ~3 cm⁻¹/pixel window. */
+function applyFullWell(y){
+  const well = CONFIG.fullWell, n = y.length;
+  const raw = Float64Array.from(y);
+  let saturated = false;
+  for (let i = 0; i < n; i++){
+    if (y[i] > well){ y[i] = well; saturated = true; }
+  }
+  if (!saturated) return false;
+
+  let i = 0;
+  while (i < n){
+    if (raw[i] <= well){ i++; continue; }
+    let j = i;
+    while (j < n && raw[j] > well) j++;
+    const pad = 12;
+    const L = Math.max(0, i - pad), R = Math.min(n - 1, j - 1 + pad);
+    for (let k = L; k <= R; k++) y[k] = well;
+    i = j;
+  }
+  return true;
+}
+
 function acquireOnce(){
   const {counts} = trueSpectrum();
   const n = CONFIG.nPixels;
   const rng = mulberry32((Math.random() * 4294967296) >>> 0);
   const drift = 1 + 0.022 * gaussPair(rng);
   const y = new Float64Array(n);
-  let saturated = false;
 
   for (let i = 0; i < n; i++){
     const mu = Math.max(counts[i] * drift, 0);
     const sd = Math.sqrt(mu + CONFIG.readNoise * CONFIG.readNoise);
-    let v = mu + sd * gaussPair(rng);
-    if (v > CONFIG.fullWell){ v = CONFIG.fullWell; saturated = true; }
-    y[i] = v;
+    y[i] = mu + sd * gaussPair(rng);
   }
+  const saturated = applyFullWell(y);
 
   let cosmic = 0;
   const expected = CONFIG.cosmicPerSecond * state.tint;
@@ -1512,6 +1537,7 @@ function drawPlot(){
     for (const v of avg) if (v > mx) mx = v;
     if (state.last) for (const v of state.last) if (v > mx) mx = v;
     yMax = Math.max(mx * 1.12, 100);
+    if (mx >= CONFIG.fullWell * 0.98) yMax = CONFIG.fullWell * 1.18;
   }
   const X = wn => M.l + (wn - CONFIG.wnMin) / (CONFIG.wnMax - CONFIG.wnMin) * (PW - M.l - M.r);
   const Y = c  => PH - M.b - clamp(c / yMax, 0, 1.05) * (PH - M.t - M.b);
@@ -1558,10 +1584,38 @@ function drawPlot(){
   if (state.last) trace(state.last, '#e8a33d', 1, 0.42);
   if (avg) trace(avg, '#5fd6c8', 1.7, 1);
 
+  if (avg && yMax > CONFIG.fullWell * 0.55){
+    const yWell = Y(CONFIG.fullWell);
+    pctx.save();
+    pctx.setLineDash([5, 4]);
+    pctx.strokeStyle = '#c45b4a';
+    pctx.lineWidth = 1.2;
+    pctx.beginPath();
+    pctx.moveTo(M.l, yWell); pctx.lineTo(PW - M.r, yWell);
+    pctx.stroke();
+    pctx.setLineDash([]);
+    pctx.fillStyle = '#c45b4a';
+    pctx.font = '12px SFMono-Regular, ui-monospace, Consolas, monospace';
+    pctx.textAlign = 'left';
+    pctx.fillText('full well  ' + CONFIG.fullWell.toLocaleString(), M.l + 8, yWell - 6);
+    pctx.restore();
+  }
+
   if (!avg){
     pctx.fillStyle = '#4e574f'; pctx.textAlign = 'center';
     pctx.font = '17px Inter, Helvetica Neue, Arial, sans-serif';
     pctx.fillText('Find a sample, focus, arm the laser, then acquire.', PW / 2, PH / 2);
+  } else {
+    let atWell = 0;
+    for (const v of avg) if (v >= CONFIG.fullWell * 0.98) atWell++;
+    if (atWell > 0){
+      pctx.fillStyle = 'rgba(24,10,8,.82)';
+      pctx.fillRect(M.l + 12, M.t + 10, 168, 26);
+      pctx.fillStyle = '#ffd9d4';
+      pctx.font = '13px SFMono-Regular, ui-monospace, Consolas, monospace';
+      pctx.textAlign = 'left';
+      pctx.fillText('DETECTOR SATURATED', M.l + 22, M.t + 28);
+    }
   }
 }
 
@@ -1584,6 +1638,7 @@ function updateReadout(){
   let peak = 0;
   for (const v of t.counts) if (v > peak) peak = v;
   const sat = peak >= CONFIG.fullWell * 0.95;
+  if (peak > CONFIG.fullWell) peak = CONFIG.fullWell;
   const s = underBeam();
   const df = s ? defocusOf(s) : Math.abs(state.z);
   const sharp = df < o.dofUm * 1.5;
